@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/home/chamat/Hydroplant/project/hydroplant/build/CMakeFiles/bootloader
+/home/chamat/Hydroplant/project/hydroplant/build/CMakeFiles/bootloader.rule
+/home/chamat/Hydroplant/project/hydroplant/build/CMakeFiles/bootloader-complete.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/home/chamat/Hydroplant/project/hydroplant/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule

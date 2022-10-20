@@ -1,0 +1,23 @@
+{
+    "project_name":       "bootloader",
+    "project_path":       "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader/subproject",
+    "build_dir":          "/home/chamat/Hydroplant/project/hydroplant/build/bootloader",
+    "config_file":        "/home/chamat/Hydroplant/project/hydroplant/sdkconfig",
+    "config_defaults":    "",
+    "bootloader_elf":     "",
+    "app_elf":            "bootloader.elf",
+    "app_bin":            "bootloader.bin",
+    "git_revision":       "v5.1-dev-1264-g1c84cfde14",
+    "target":             "esp32",
+    "rev":                "0",
+    "phy_data_partition": "",
+    "monitor_baud" :      "115200",
+    "monitor_toolprefix": "xtensa-esp32-elf-",
+    "config_environment" : {
+        "COMPONENT_KCONFIGS" : "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/efuse/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_common/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_hw_support/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_system/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/freertos/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/hal/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/log/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/newlib/Kconfig;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/spi_flash/Kconfig",
+        "COMPONENT_KCONFIGS_PROJBUILD" : "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader/Kconfig.projbuild;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_app_format/Kconfig.projbuild;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_rom/Kconfig.projbuild;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esptool_py/Kconfig.projbuild;/home/chamat/Hydroplant/esp_rtos/esp-idf/components/partition_table/Kconfig.projbuild"
+    },
+    "build_components" : [ "bootloader", "bootloader_support", "efuse", "esp_app_format", "esp_common", "esp_hw_support", "esp_rom", "esp_system", "esptool_py", "freertos", "hal", "log", "main", "micro-ecc", "newlib", "partition_table", "soc", "spi_flash", "xtensa", "" ],
+    "build_component_paths" : [ "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader_support", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/efuse", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_app_format", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_common", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_hw_support", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_rom", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esp_system", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/esptool_py", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/freertos", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/hal", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/log", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader/subproject/main", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/bootloader/subproject/components/micro-ecc", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/newlib", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/partition_table", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/soc", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/spi_flash", "/home/chamat/Hydroplant/esp_rtos/esp-idf/components/xtensa", "" ],
+    "debug_prefix_map_gdbinit": ""
+}
