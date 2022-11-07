@@ -18,10 +18,6 @@
 
 #include "driver/gpio.h"
 
-
-
-
-
 #include "freertos/timers.h"
 
 
@@ -76,6 +72,20 @@
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WAPI_PSK
 #endif
 
+#define I2C_MASTER_SCL_IO           CONFIG_I2C_MASTER_SCL      /*!< GPIO number used for I2C master clock */
+#define I2C_MASTER_SDA_IO           CONFIG_I2C_MASTER_SDA      /*!< GPIO number used for I2C master data  */
+#define I2C_MASTER_NUM              0                          /*!< I2C master i2c port number, the number of i2c peripheral interfaces available will depend on the chip */
+#define I2C_MASTER_FREQ_HZ          400000                     /*!< I2C master clock frequency */
+#define I2C_MASTER_TX_BUF_DISABLE   0                          /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_RX_BUF_DISABLE   0                          /*!< I2C master doesn't need buffer */
+#define I2C_MASTER_TIMEOUT_MS       1000
+
+#define MPU9250_SENSOR_ADDR                 0x68        /*!< Slave address of the MPU9250 sensor */
+#define MPU9250_WHO_AM_I_REG_ADDR           0x75        /*!< Register addresses of the "who am I" register */
+
+#define MPU9250_PWR_MGMT_1_REG_ADDR         0x6B        /*!< Register addresses of the power managment register */
+#define MPU9250_RESET_BIT                   7
+
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
 
@@ -85,10 +95,20 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
+
+#define bomba1_pin 23
+#define sw1_pin 4
+#define sw2_pin 13
+#define sw3_pin 35
+#define fan1_2_pin 14
+#define fan3_4_pin 12
+#define io_int36_pin 39
+#define io_int34_pin 34
+#define ppm_pin 36
+#define ph_pin 36
 static const char *TAG = "wifi station";
 
 static int s_retry_num = 0;
-
 
 static void event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -177,7 +197,6 @@ void wifi_init_sta(void)
     }
 }
 
-
 esp_err_t client_event_post_handler(esp_http_client_event_handle_t evt)
 {
     switch (evt->event_id)
@@ -191,7 +210,6 @@ esp_err_t client_event_post_handler(esp_http_client_event_handle_t evt)
     }
     return ESP_OK;
 }
-
 
 esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
 {
@@ -248,7 +266,7 @@ static void post_test()
         .method = HTTP_METHOD_POST,
         .cert_pem = NULL,
         .event_handler = client_event_post_handler};
-        const char *post_data = "<style type=\"text/css\"> a{margin: 50px 50px; background: #000000; color: #ffffff; text-decoration: none; padding: 1% 20% 1%; border-radius: 10px; font-size: 8.0em;}</style>";
+        const char *post_data = "{\"title\":\"test\"}";
     //const char *post_data = "{\"title\":\"test\"}";
     esp_http_client_handle_t client = esp_http_client_init(&config_post);
     
@@ -311,17 +329,68 @@ static void post_test()
         ESP_LOGE(TAG, "HTTP PUT request failed: %s", esp_err_to_name(err));
     }
 }
+/* i2c */
+/**
+ * @brief i2c master initialization
+ */
+static esp_err_t i2c_master_init(void)
+{
+    int i2c_master_port = I2C_MASTER_NUM;
+
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+
+    i2c_param_config(i2c_master_port, &conf);
+
+    return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+}
+
+/**
+ * @brief Write a byte to a MPU9250 sensor register
+ */
+static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
+{
+    int ret;
+    uint8_t write_buf[2] = {reg_addr, data};
+
+    ret = i2c_master_write_to_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+
+    return ret;
+}
+
+/**
+ * @brief Read a sequence of bytes from a MPU9250 sensor registers
+ */
+static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    return i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+}
 
 void app_main(void)
 {
     //Initialize NVS
+    gpio_reset_pin(bomba1_pin);
+    gpio_set_direction(bomba1_pin, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(sw1_pin);
+    gpio_set_direction(sw1, GPIO_MODE_INPUT); 
+    gpio_reset_pin(sw2_pin);
+    gpio_set_direction(sw2_pin, GPIO_MODE_INPUT);
+    gpio_reset_pin(sw3_pin);
+    gpio_set_direction(sw3_pin, GPIO_MODE_INPUT);
+
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
       ESP_ERROR_CHECK(nvs_flash_erase());
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
+    /*
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
     
@@ -340,6 +409,18 @@ void app_main(void)
     patch_test();
     ESP_LOGI("TESTE", "Terceiro GET");
     rest_get();
+*/
+    while (1)
+    {
+            gpio_set_level(bomba1_pin, 1);
+            vTaskDelay(3000/portTICK_PERIOD_MS);
+            ESP_LOGI("led", "blink1");
+            
+            
+            gpio_set_level(bomba1_pin, 0);
+            ESP_LOGI("led", "blink0");
+            vTaskDelay(3000/portTICK_PERIOD_MS);
+    }
 
     //put_test();
     //rest_get();
