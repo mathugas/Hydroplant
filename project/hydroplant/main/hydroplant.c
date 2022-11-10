@@ -36,6 +36,7 @@
 #include "freertos/timers.h"
 #include "freertos/event_groups.h"
 #include "esp_wifi.h"
+#include "driver/i2c.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
@@ -104,6 +105,7 @@ static EventGroupHandle_t s_wifi_event_group;
 #define fan3_4_pin 12
 #define io_int36_pin 39
 #define io_int34_pin 34
+#define motor5_pin 15
 #define ppm_pin 36
 #define ph_pin 36
 static const char *TAG = "wifi station";
@@ -333,44 +335,47 @@ static void post_test()
 /**
  * @brief i2c master initialization
  */
-static esp_err_t i2c_master_init(void)
-{
-    int i2c_master_port = I2C_MASTER_NUM;
 
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
-    };
-
-    i2c_param_config(i2c_master_port, &conf);
-
-    return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
-}
+//static esp_err_t i2c_master_init(void)
+//{
+//    int i2c_master_port = I2C_MASTER_NUM;
+//
+//    i2c_config_t conf = {
+//        .mode = I2C_MODE_MASTER,
+//        .sda_io_num = I2C_MASTER_SDA_IO,
+//        .scl_io_num = I2C_MASTER_SCL_IO,
+//        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+//        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+//        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+//    };
+//
+//    i2c_param_config(i2c_master_port, &conf);
+//
+//    return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+//}
 
 /**
  * @brief Write a byte to a MPU9250 sensor register
  */
-static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
-{
-    int ret;
-    uint8_t write_buf[2] = {reg_addr, data};
 
-    ret = i2c_master_write_to_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-
-    return ret;
-}
+//static esp_err_t mpu9250_register_write_byte(uint8_t reg_addr, uint8_t data)
+//{
+//    int ret;
+//    uint8_t write_buf[2] = {reg_addr, data};
+//
+//    ret = i2c_master_write_to_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+//
+//    return ret;
+//}
 
 /**
  * @brief Read a sequence of bytes from a MPU9250 sensor registers
  */
-static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
-{
-    return i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-}
+//
+//static esp_err_t mpu9250_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
+//{
+//    return i2c_master_write_read_device(I2C_MASTER_NUM, MPU9250_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+//}
 
 void app_main(void)
 {
@@ -378,11 +383,18 @@ void app_main(void)
     gpio_reset_pin(bomba1_pin);
     gpio_set_direction(bomba1_pin, GPIO_MODE_OUTPUT);
     gpio_reset_pin(sw1_pin);
-    gpio_set_direction(sw1, GPIO_MODE_INPUT); 
+    gpio_set_direction(sw1_pin, GPIO_MODE_INPUT); 
     gpio_reset_pin(sw2_pin);
     gpio_set_direction(sw2_pin, GPIO_MODE_INPUT);
     gpio_reset_pin(sw3_pin);
     gpio_set_direction(sw3_pin, GPIO_MODE_INPUT);
+    gpio_reset_pin(fan1_2_pin);
+    gpio_set_direction(fan1_2_pin, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(fan3_4_pin);
+    gpio_set_direction(fan3_4_pin, GPIO_MODE_OUTPUT);
+    gpio_reset_pin(motor5_pin);
+    gpio_set_direction(motor5_pin, GPIO_MODE_OUTPUT);
+    
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -413,12 +425,18 @@ void app_main(void)
     while (1)
     {
             gpio_set_level(bomba1_pin, 1);
+            gpio_set_level(fan3_4_pin, 1);
+            gpio_set_level(fan1_2_pin, 1);
+            gpio_set_level(motor5_pin, 1);
             vTaskDelay(3000/portTICK_PERIOD_MS);
-            ESP_LOGI("led", "blink1");
+            //ESP_LOGI("led", "blink1");
             
             
             gpio_set_level(bomba1_pin, 0);
-            ESP_LOGI("led", "blink0");
+            gpio_set_level(fan3_4_pin, 1);
+            gpio_set_level(fan1_2_pin, 1);
+            gpio_set_level(motor5_pin, 1);
+            //ESP_LOGI("led", "blink0");
             vTaskDelay(3000/portTICK_PERIOD_MS);
     }
 
