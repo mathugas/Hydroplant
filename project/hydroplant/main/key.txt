@@ -1,2 +1,2 @@
-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
+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
 https://github.com/UncleRus/esp-idf-lib/tree/master/components
