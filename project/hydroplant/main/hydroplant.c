@@ -139,12 +139,16 @@ adc_cali_handle_t adc2_cali_handle = NULL;
 adc_oneshot_unit_handle_t adc2_handle;
 adc_oneshot_unit_init_cfg_t init_config2 = {
     .unit_id = ADC_UNIT_2,
-    .ulp_mode = ADC_ULP_MODE_DISABLE,
+    //.ulp_mode = ADC_ULP_MODE_DISABLE,
 };
 adc_cali_handle_t adc1_cali_handle = NULL;
-adc_oneshot_chan_cfg_t config = {
+adc_oneshot_chan_cfg_t config1 = {
     .bitwidth = ADC_BITWIDTH_DEFAULT,
-    .atten = ADC_ATTEN_DB_0,
+    .atten = ADC_ATTEN_DB_11,
+};
+adc_oneshot_chan_cfg_t config2 = {
+    .bitwidth = ADC_BITWIDTH_DEFAULT,
+    .atten = ADC_ATTEN_DB_11,
 };
 adc_oneshot_unit_handle_t adc1_handle;
 adc_oneshot_unit_init_cfg_t init_config1 = {
@@ -569,19 +573,19 @@ void get_sensors(void *pvParameter)
             ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
         //read ph
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &adc_raw[0][0]));
-        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_0, adc_raw[0][0]);
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_0, adc_raw[0][0]);
         if (do_calibration1) {
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw[0][0], &voltage[0][0]));
-        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_0, voltage[0][0]);
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_0, voltage[0][0]);
         }
         ph_voltage = voltage[0][0];
         convert_to_ph(ph_voltage);
         //read ppm
         ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
-        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_2 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_2 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
         if (do_calibration2) {
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc2_cali_handle, adc_raw[0][0], &voltage[0][0]));
-        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_2 + 1, ADC_CHANNEL_7, voltage[0][0]);
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_2 + 1, ADC_CHANNEL_7, voltage[0][0]);
         }
         ppm_voltage = voltage[0][0];
         convert_to_ppm(ppm_voltage,waterTemp);
@@ -731,8 +735,8 @@ float convert_to_ph(float averageVoltage){
     //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
     //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
     //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
-    float compensationCoefficient=1;    // compensation 
-    float phValue = (((compensationCoefficient * 2.8 * averageVoltage)/0.20318721)/1000);
+    float compensationCoefficient=0.8986;    // compensation 
+    float phValue = (((compensationCoefficient * 2.8 * averageVoltage)/(0.4722*0.9210))/1000);
 
     ESP_LOGI("PH", "phValue = %f", phValue);
     return phValue;
@@ -778,12 +782,12 @@ void app_main(void)
     //    .bitwidth = ADC_BITWIDTH_DEFAULT,
     //    .atten = ADC_ATTEN_DB_0,
     //};
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &config1));
 
 
     //-------------ADC1 Calibration Init---------------//
     //adc_cali_handle_t adc1_cali_handle = NULL;
-    do_calibration1 = example_adc_calibration_init(ADC_UNIT_1, ADC_ATTEN_DB_0, &adc1_cali_handle);
+    do_calibration1 = example_adc_calibration_init(ADC_UNIT_1, ADC_ATTEN_DB_11, &adc1_cali_handle);
 
     //-------------ADC2 Init---------------//
     //adc_oneshot_unit_handle_t adc2_handle;
@@ -795,10 +799,10 @@ void app_main(void)
 
     //-------------ADC2 Calibration Init---------------//
     //adc_cali_handle_t adc2_cali_handle = NULL;
-    do_calibration2 = example_adc_calibration_init(ADC_UNIT_2, ADC_ATTEN_DB_0, &adc2_cali_handle);
+    do_calibration2 = example_adc_calibration_init(ADC_UNIT_2, ADC_ATTEN_DB_11, &adc2_cali_handle);
 
     //-------------ADC2 Config---------------//
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
     //ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
