@@ -60,8 +60,8 @@
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
-#define SSID "ReggaeHouse2.4G"
-#define PASS "123456789"
+#define SSID "FOCH_2G"
+#define PASS "c6628b8446"
 
 #define EXAMPLE_ESP_WIFI_SSID      SSID
 #define EXAMPLE_ESP_WIFI_PASS      PASS
@@ -126,7 +126,14 @@ static EventGroupHandle_t s_wifi_event_group;
 #define io_int34_pin 34
 #define motor5_pin 15
 
-
+    char message_get[300];
+    const char c1[10]= "\"c1\"";
+    const char c2[10]= "\"c2\"";
+    const char p1[10]= "\"p1\"";
+    const char p2[10]= "\"p2\"";
+    const char t[10]= "\"t\"";
+    const char lum[10]= "\"lum\"";
+    char *result;
 
 static int adc_raw[2][10];
 static int voltage[2][10];
@@ -290,7 +297,10 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
     switch (evt->event_id)
     {
     case HTTP_EVENT_ON_DATA:
+
         printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
+        snprintf(message_get, sizeof(message_get), "HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
+        
         break;
 
     default:
@@ -299,10 +309,24 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
     return ESP_OK;
 }
 
+
+void get_decode()
+{
+    
+    result=strstr(message_get, c1);
+    printf("%s",result);
+    printf("\n");
+    printf("RESULTADO 2 \n");
+    result=strstr(result, "stringValue\": \"");
+    printf("%s",result);
+}
+
+
+
 static void rest_get()
 {
     esp_http_client_config_t config_get = {
-        .url = "https://plant-arm-project-default-rtdb.europe-west1.firebasedatabase.app/.json",
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/SendingValuesEsp/Parameters/?key=AIzaSyCyDMEBVIO-kxZxl2F5pRgAa34TDye5ExU",
         .method = HTTP_METHOD_GET,
         .cert_pem = NULL,
         .event_handler = client_event_get_handler};
@@ -363,12 +387,13 @@ static void post_test()
     //PATCH
     const char *TAG = "PATCH REQUEST";
     esp_http_client_config_t config_post = {
-        .url = "https://plant-arm-project-default-rtdb.europe-west1.firebasedatabase.app/-NFQX8-b2oqRksquXzo3/.json",
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/ReceivingValuesEsp/.json",
         .method = HTTP_METHOD_POST,
         .cert_pem = NULL,
         .event_handler = client_event_post_handler};
     char message[300];
     snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
+    //snprintf (message, sizeof(message), "{\"fields\":{\"wt\":{\"Solution Temperature\":\"%.2f\"},\"at\":{\"Ambient Temperature\":\"%.2f\"},\"ph\":{\"Solution PH\":\"%.2f\"},\"cd\":{\"Solution PPM\":\"%.2f\"},\"ah\":{\"Ambient Humidity\":\"%.2f\"}}", waterTemp, airTemp, PH, PPM, airHumi);
     const char *post_data = message;
 
     //ESP_LOGI(TAG, message);
@@ -805,8 +830,8 @@ void app_main(void)
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
-    //ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
-    //wifi_init_sta();
+    ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
     
     //ESP_LOGI("TESTE", "Primeiro GET");
     //rest_get();
@@ -820,7 +845,7 @@ void app_main(void)
     //rest_get();
     //vTaskDelay(2000 / portTICK_PERIOD_MS);
     //ESP_LOGI("TESTE", "Primeiro PATCH");
-    //patch_test();
+    
     //ESP_LOGI("TESTE", "Terceiro GET");
     //rest_get();
 
@@ -861,7 +886,7 @@ void app_main(void)
     
     // Start System Operation
     gpio_set_level(bomba1_pin, 1);
-    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
     xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
@@ -907,7 +932,10 @@ void app_main(void)
             //pcf8574_register_write_byte(0x00, test);
             //pcf8574_register_read(0x00,data,1);
             //ESP_LOGI("i2c_test", "WHO_AM_I = %X", data[0]);
-            vTaskDelay(500/portTICK_PERIOD_MS);
+            //patch_test();
+            rest_get();
+            get_decode();
+            vTaskDelay(5000/portTICK_PERIOD_MS);
             //ESP_LOGI("led", "blink1");
             //test = ~test;
             
