@@ -60,8 +60,8 @@
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
-#define SSID "FOCH_2G"
-#define PASS "c6628b8446"
+#define SSID "ReggaeHouse2.4G"
+#define PASS "123456789"
 
 #define EXAMPLE_ESP_WIFI_SSID      SSID
 #define EXAMPLE_ESP_WIFI_PASS      PASS
@@ -126,14 +126,14 @@ static EventGroupHandle_t s_wifi_event_group;
 #define io_int34_pin 34
 #define motor5_pin 15
 
-    char message_get[300];
+    char message_get[1000];
     const char c1[10]= "\"c1\"";
     const char c2[10]= "\"c2\"";
     const char p1[10]= "\"p1\"";
     const char p2[10]= "\"p2\"";
     const char t[10]= "\"t\"";
     const char lum[10]= "\"lum\"";
-    char *result;
+    
 
 static int adc_raw[2][10];
 static int voltage[2][10];
@@ -312,13 +312,99 @@ esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
 
 void get_decode()
 {
+    char aux[1000];
+    char aux2[10];
+    char *result;
+    char* pEnd; 
+    int size=8;
+    int i=0;
+    float lumi=0;
     
     result=strstr(message_get, c1);
-    printf("%s",result);
-    printf("\n");
-    printf("RESULTADO 2 \n");
-    result=strstr(result, "stringValue\": \"");
-    printf("%s",result);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    ppm_min= strtof(aux2, NULL);
+    printf("novo resultado ppm minimo: %.2f \n",ppm_min);
+
+        result=strstr(message_get, c2);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    ppm_max= strtof(aux2, NULL);
+    printf("novo resultado ppm maximo: %.2f \n",ppm_max);
+
+        result=strstr(message_get, p1);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    ph_min= strtof(aux2, NULL);
+    printf("novo resultado ph minimo: %.2f \n",ph_min);
+
+        result=strstr(message_get, p2);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    ph_max= strtof(aux2, NULL);
+    printf("novo resultado ph max: %.2f \n",ph_max);
+
+        result=strstr(message_get, t);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    airTemp= strtof(aux2, NULL);
+    printf("novo resultado airTemp: %.2f \n",airTemp);
+
+        result=strstr(message_get,lum);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (30+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    
+    lumi= strtof(aux2, NULL);
+    if (lumi==0.0){
+        veg=0;
+        bloom=0;
+        veg_bloom=0;
+    }
+    else if (lumi==1.0){
+        veg=1;
+        bloom=0;
+        veg_bloom=0;
+    }
+    else if (lumi==2.0){
+        veg=0;
+        bloom=1;
+        veg_bloom=0;
+    }
+    else if (lumi==3.0){
+        veg=1;
+        bloom=1;
+        veg_bloom=1;
+    }
+    else {
+        veg=veg;
+        bloom=bloom;
+        veg_bloom=veg_bloom;
+    }
+    printf("novo resultado luminosidade: %.2f \n",lumi);
+
 }
 
 
@@ -360,15 +446,19 @@ static void post_test()
 // POST
     const char *TAG = "POST REQUEST";
     esp_http_client_config_t config_post = {
-        .url = "https://plant-arm-project-default-rtdb.europe-west1.firebasedatabase.app/.json",
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json",
         .method = HTTP_METHOD_POST,
         .cert_pem = NULL,
         .event_handler = client_event_post_handler};
-        const char *post_data = "{\"title\":\"test\"}";
-    //const char *post_data = "{\"title\":\"test\"}";
+        //const char *post_data = "{\"title\":\"test\"}";
+    //const char *post_data = "{'fields':{\"wt\":{'stringValue':'10'}}}";
+    char message[300];
+    //snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
+    snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'0'}}}", waterTemp, airTemp, PH, PPM, airHumi);
+    const char *post_data = message;
     esp_http_client_handle_t client = esp_http_client_init(&config_post);
     
-    esp_http_client_set_url(client, "https://plant-arm-project-default-rtdb.europe-west1.firebasedatabase.app/.json");
+    esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/posts/documents/ReceivingValuesEsp/.json");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
@@ -387,21 +477,23 @@ static void post_test()
     //PATCH
     const char *TAG = "PATCH REQUEST";
     esp_http_client_config_t config_post = {
-        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/ReceivingValuesEsp/.json",
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json",
         .method = HTTP_METHOD_POST,
         .cert_pem = NULL,
         .event_handler = client_event_post_handler};
     char message[300];
-    snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
-    //snprintf (message, sizeof(message), "{\"fields\":{\"wt\":{\"Solution Temperature\":\"%.2f\"},\"at\":{\"Ambient Temperature\":\"%.2f\"},\"ph\":{\"Solution PH\":\"%.2f\"},\"cd\":{\"Solution PPM\":\"%.2f\"},\"ah\":{\"Ambient Humidity\":\"%.2f\"}}", waterTemp, airTemp, PH, PPM, airHumi);
+    //snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
+    //snprintf (message, sizeof(message), "{\'fields\':{\"wt\":{\"stringValue\":\"%.2f\"},\"at\":{\"stringValue\":\"%.2f\"},\"ph\":{\"stringValue\":\"%.2f\"},\"cd\":{\"stringValue\":\"%.2f\"},\"ct\":{\"stringValue\":\"%.2f\"}}", waterTemp, airTemp, PH, PPM, airHumi);
+    snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'0'}}", waterTemp, airTemp, PH, PPM, airHumi);
+
     const char *post_data = message;
 
-    //ESP_LOGI(TAG, message);
+    //ESP_LOGI("TESTE", "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"ct\":{'stringValue':'%.2f'}}", waterTemp, airTemp, PH, PPM, airHumi);
     //snprintf (NULL, 0, "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH)
     //int len = ;
     
     esp_http_client_handle_t client = esp_http_client_init(&config_post);
-    esp_http_client_set_url(client, "https://plant-arm-project-default-rtdb.europe-west1.firebasedatabase.app/-NFQX8-b2oqRksquXzo3/.json");
+    esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json");
     esp_http_client_set_method(client, HTTP_METHOD_PATCH);
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
     esp_err_t err = esp_http_client_perform(client);
@@ -622,18 +714,27 @@ void get_sensors(void *pvParameter)
     //vTaskDelete(NULL);
 }
 
-void app_upload(void *pvParameter)
+void app_post(void *pvParameter)
 {
 
     while(1)
     {
-        patch_test();
+        post_test();
         upload_app=0;
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(100000));
     }
 }
 
+void app_get(void *pvParameter)
+{
 
+    while(1)
+    {
+        rest_get();
+        get_decode();
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
 
 
 void pcf1_write_set_pin(char pin_number)
@@ -886,11 +987,13 @@ void app_main(void)
     
     // Start System Operation
     gpio_set_level(bomba1_pin, 1);
-    //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
-    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
-    xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
+    xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
+    xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     while (1)
@@ -933,8 +1036,8 @@ void app_main(void)
             //pcf8574_register_read(0x00,data,1);
             //ESP_LOGI("i2c_test", "WHO_AM_I = %X", data[0]);
             //patch_test();
-            rest_get();
-            get_decode();
+            //post_test();
+            
             vTaskDelay(5000/portTICK_PERIOD_MS);
             //ESP_LOGI("led", "blink1");
             //test = ~test;
