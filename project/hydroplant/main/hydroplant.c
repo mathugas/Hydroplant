@@ -20,6 +20,11 @@
 #include "esp_adc/adc_cali_scheme.h"
 #include "soc/soc_caps.h"
 #include "freertos/timers.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_sleep.h"
+#include "sdkconfig.h"
+
 
 #include "esp_netif.h"
 #include "esp_http_client.h"
@@ -34,6 +39,7 @@
 #include <pcf8574.h>
 #include <ds18x20.h>
 #include <inttypes.h>
+
 
 //#if defined(CONFIG_EXAMPLE_TYPE_DHT11)
 //#define SENSOR_TYPE DHT_TYPE_DHT11
@@ -60,6 +66,18 @@
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
+
+#include "driver/ledc.h"
+#include "esp_err.h"
+
+#define LEDC_TIMER              LEDC_TIMER_0
+#define LEDC_MODE               LEDC_LOW_SPEED_MODE
+#define LEDC_OUTPUT_IO          (5) // Define the output GPIO
+#define LEDC_CHANNEL            LEDC_CHANNEL_0
+#define LEDC_DUTY_RES           LEDC_TIMER_8_BIT // Set duty resolution to 13 bits
+#define LEDC_DUTY               (127) // Set duty to 50%. ((2 ** 8) - 1) * 50% = 4095
+#define LEDC_FREQUENCY          (25000) // Frequency in Hertz. Set frequency at 5 kHz
+
 #define SSID "ReggaeHouse2.4G"
 #define PASS "123456789"
 
@@ -67,6 +85,7 @@
 #define EXAMPLE_ESP_WIFI_PASS      PASS
 #define EXAMPLE_ESP_MAXIMUM_RETRY  3
 #define CONFIG_ESP_WIFI_AUTH_WPA_WPA2_PSK 1
+
 
 #if CONFIG_ESP_WIFI_AUTH_OPEN
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_OPEN
@@ -163,6 +182,7 @@ adc_oneshot_unit_init_cfg_t init_config1 = {
 };
 float waterTemp = 25.0;
 float airTemp = 25.0;
+float target_airTemp = 20.0;
 float airHumi = 54.0;
 float PH = 14.0;
 float PPM = 30.0;
@@ -170,8 +190,8 @@ float humi_min=50.0;
 float humi_max=80.0;
 float ph_min=10.0;
 float ph_max=5.0;
-float ppm_max=700.0;
-float ppm_min=200.0;
+float ppm_max=40.0;
+float ppm_min=70.0;
 uint16_t port1_val=0x00;
 uint16_t port2_val=0xFF;
 bool upload_app=0;
@@ -211,6 +231,52 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
+
+static void example_ledc_init(void)
+{
+    // Prepare and then apply the LEDC PWM timer configuration
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_MODE,
+        .timer_num        = LEDC_TIMER,
+        .duty_resolution  = LEDC_DUTY_RES,
+        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 5 kHz
+        .clk_cfg          = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    // Prepare and then apply the LEDC PWM channel configuration
+    ledc_channel_config_t ledc_channel_0 = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL_0,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = fan3_4_pin,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+        ledc_channel_config_t ledc_channel_1 = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL_1,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = fan1_2_pin,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+        ledc_channel_config_t ledc_channel_2 = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL_2,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = motor5_pin,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_0));
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_1));
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_2));
+}
+
 
 void wifi_init_sta(void)
 {
@@ -367,8 +433,8 @@ void get_decode()
         if (i==size) {aux2[i]=0;}
     }
     
-    airTemp= strtof(aux2, NULL);
-    printf("novo resultado airTemp: %.2f \n",airTemp);
+    target_airTemp= strtof(aux2, NULL);
+    printf("novo resultado airTemp: %.2f \n",target_airTemp);
 
         result=strstr(message_get,lum);
     for (i=0; i<size; i++){
@@ -599,7 +665,7 @@ void ph_control(void *pvParameter)
             vTaskDelay(pdMS_TO_TICKS(2000));
         }
         //break;
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
     //vTaskDelete(NULL);
 }
@@ -623,7 +689,7 @@ void ppm_control(void *pvParameter)
             vTaskDelay(pdMS_TO_TICKS(2000));
         }
         //break;
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
     //vTaskDelete(NULL);
 }
@@ -683,11 +749,11 @@ void get_sensors(void *pvParameter)
             ESP_LOGI("Water_temp_test", "Water Temp: %.2f°C", waterTemp);
         
         //read air temp air humidity
-        res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
-        if (res != ESP_OK)
-            ESP_LOGI("DHT_test:","Could not read data from sensor");
-        else
-            ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
+        //res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
+        //if (res != ESP_OK)
+        //    ESP_LOGI("DHT_test:","Could not read data from sensor");
+        //else
+        //    ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
         //read ph
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &adc_raw[0][0]));
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_0, adc_raw[0][0]);
@@ -735,6 +801,7 @@ void app_get(void *pvParameter)
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
+
 
 
 void pcf1_write_set_pin(char pin_number)
@@ -842,9 +909,10 @@ float convert_to_ppm(float averageVoltage, float waterTemp){
     //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
     //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
     //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
+    float offset=30.0;
     float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
     float compensationVolatge = (averageVoltage / compensationCoefficient)/1000;  //temperature compensation
-    float tdsValue = (((133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5)/0.79192); //convert voltage value to tds value
+    float tdsValue = ((((133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5)/3472*0.9210)-offset); //convert voltage value to tds value
 
     //ESP_LOGI("TDS", "Volts per division = %f", vPerDiv);
     //ESP_LOGI("TDS", "Average Voltage = %f", averageVoltage);
@@ -868,6 +936,95 @@ float convert_to_ph(float averageVoltage){
     return phValue;
 }
 
+double clamp(double value, double min, double max){
+	if(value > max){ return max;}
+	if(value < min){ return min;}
+	return value;
+}
+
+uint64_t lastTime;
+double Input, Output, Setpoint;
+double errSum, lastErr;
+double kp=80, ki=0, kd=0;
+double omax=255;
+double omin=-255;
+double iterm;
+void Compute()
+{
+    esp_err_t res;
+    /*How long since we last calculated*/
+    res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
+    if (res != ESP_OK)
+        ESP_LOGI("DHT_test:","Could not read data from sensor");
+    else
+    ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
+    
+    Input= airTemp;
+    Setpoint = target_airTemp;
+    
+    uint64_t now = esp_timer_get_time();
+    now=now/1000;
+    double timeChange = (double)(now - lastTime);
+    
+    /*Compute all the working error variables*/
+    double error = Setpoint - Input;
+    errSum += (error * timeChange);
+    double dErr = (error - lastErr) / timeChange;
+    /*Compute PID Output*/
+    iterm=ki * errSum;
+    if (iterm > omax){
+		iterm = omax; 
+    }
+	else if (iterm < omin){
+		iterm = omin; 
+    }
+    Output = kp * error + iterm + kd * dErr;
+    // Apply limit to output value
+	
+    if (Output > omax){
+		Output = omax; 
+    }
+	else if (Output < omin){
+		Output= omin;  
+    }
+    /*Remember some variables for next time*/
+    lastErr = error;
+    lastTime = now;
+    Output=-Output;
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, Output));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, Output));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, Output));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
+    ESP_LOGI("PID", "Duty = %lf", Output);
+    ESP_LOGI("PID", "errorsum = %lf", errSum);
+    ESP_LOGI("PID", "error = %lf", error);
+
+}
+
+void SetTunings(double Kp, double Ki, double Kd)
+{
+    kp = Kp;
+    ki = Ki;
+    kd = Kd;
+}
+
+void pid_update(void *pvParameter)
+{
+
+    while(1)
+    {
+        Compute();
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+
+
 
 void app_main(void)
 {
@@ -888,6 +1045,7 @@ void app_main(void)
     gpio_reset_pin(motor5_pin);
     gpio_set_direction(motor5_pin, GPIO_MODE_OUTPUT);
     ESP_ERROR_CHECK(i2cdev_init());
+
     //ESP_ERROR_CHECK(i2c_master_init());
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -987,9 +1145,21 @@ void app_main(void)
     
     // Start System Operation
     gpio_set_level(bomba1_pin, 1);
+    // Set the LEDC peripheral configuration
+    example_ledc_init();
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, LEDC_DUTY));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_1, LEDC_DUTY));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, LEDC_DUTY));
+    // Update duty to apply the new value
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
     //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
-    xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
-    xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
+    //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
     //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
     //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
@@ -1037,11 +1207,14 @@ void app_main(void)
             //ESP_LOGI("i2c_test", "WHO_AM_I = %X", data[0]);
             //patch_test();
             //post_test();
-            
-            vTaskDelay(5000/portTICK_PERIOD_MS);
+            //target_airTemp=24.00;
+
+            vTaskDelay(12000/portTICK_PERIOD_MS);
             //ESP_LOGI("led", "blink1");
             //test = ~test;
-            
+            target_airTemp=23.00;
+            vTaskDelay(12000/portTICK_PERIOD_MS);
+            target_airTemp=25.00;
             //gpio_set_level(bomba1_pin, 0);
             //gpio_set_level(fan3_4_pin, 0);
             //gpio_set_level(fan1_2_pin, 0);
