@@ -184,26 +184,26 @@ adc_oneshot_unit_init_cfg_t init_config1 = {
 };
 float waterTemp = 25.0;
 float airTemp = 25.0;
-float target_airTemp = 20.0;
+float target_airTemp = 25.0;
 float airHumi = 54.0;
-float PH = 14.0;
-float PPM = 30.0;
+float PH = 9.0;
+float PPM = 700.0;
 float humi_min=50.0;
 float humi_max=80.0;
-float ph_min=10.0;
-float ph_max=5.0;
-float ppm_max=40.0;
-float ppm_min=70.0;
-uint16_t port1_val=0x00;
-uint16_t port2_val=0xFF;
+float ph_min=7.0;
+float ph_max=8.0;
+float ppm_max=800.0;
+float ppm_min=600.0;
+uint8_t port1_val=0xFF;
+uint8_t port2_val=0x00;
 bool upload_app=0;
 bool veg=0;
 bool bloom=0;
-bool veg_bloom=0;
+bool veg_bloom=1;
 float convert_to_ppm(float averageVoltage, float waterTemp);
 float convert_to_ph(float averageVoltage);
-void pcf1_write(uint16_t port_val);
-void pcf2_write(uint16_t port_val);
+void pcf1_write(uint8_t port_val);
+void pcf2_write(uint8_t port_val);
 uint8_t pcf1_read(void);
 uint8_t pcf2_read(void);
 void pcf1_write_set_pin(char pin_number);
@@ -641,11 +641,11 @@ void humi_control(void *pvParameter)
     {
        
         if (airHumi<=humi_min)
-            pcf2_write_clear_pin(2);   //inverted logic because of transistor    
+            pcf2_write_set_pin(2);      
         else if (airHumi>=humi_max)
-            pcf2_write_set_pin(2);
+            pcf2_write_clear_pin(2);
         else 
-            pcf2_write_set_pin(2);     
+            pcf2_write_clear_pin(2);     
         //break;
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
@@ -661,9 +661,9 @@ void ph_control(void *pvParameter)
         {
                 // Stop Solution Circulation due PH too LOW
                 gpio_set_level(bomba1_pin, 0);
-                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_max);
+                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_min);
         }
-        if (PH<=(ph_max+2.0))
+        if (PH>=(ph_max+2.0))
         {
                 // Stop Solution Circulation due PH too HIGH
                 gpio_set_level(bomba1_pin, 0);
@@ -671,14 +671,14 @@ void ph_control(void *pvParameter)
         }
         if (solution_control==1){
             if (PH<=ph_min){
-                pcf2_write_clear_pin(5);  //bomb3 //inverted logic because of transistor
+                pcf2_write_set_pin(5);  //bomb3  
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_set_pin(5);  //bomb3 //inverted logic because of transistor
+                pcf2_write_clear_pin(5);  //bomb3
             }        
             else if (PH>=ph_max){
-                pcf2_write_clear_pin(3);  //bomb4 //inverted logic because of transistor 
+                pcf2_write_set_pin(3);  //bomb4  
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_set_pin(3);  //bomb4 //inverted logic because of transistor   
+                pcf2_write_clear_pin(3);  //bomb4    
             }
             else {
                 gpio_set_level(bomba1_pin, 1);
@@ -704,7 +704,7 @@ void ppm_control(void *pvParameter)
                 gpio_set_level(bomba1_pin, 0);
                 ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too LOW: %.2f. Limit is %.2f", PPM, ppm_min);
         }
-        if (PPM<=(ppm_max+200.0))
+        if (PPM>=(ppm_max+200.0))
         {
                 // Stop Solution Circulation due PPM too HIGH
                 gpio_set_level(bomba1_pin, 0);
@@ -712,14 +712,14 @@ void ppm_control(void *pvParameter)
         }
         if (solution_control==1){    
             if (PPM<=ppm_min){
-                pcf2_write_clear_pin(6);  //bomb2 //inverted logic because of transistor
+                pcf2_write_set_pin(6);  //bomb2 
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_set_pin(6);  //bomb2 //inverted logic because of transistor
+                pcf2_write_clear_pin(6);  //bomb2 
             }        
             else if (PPM>=ppm_max){
-                pcf2_write_clear_pin(4);  //bomb5 //inverted logic because of transistor 
+                pcf2_write_set_pin(4);  //bomb5 
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_set_pin(4);  //bomb5 //inverted logic because of transistor   
+                pcf2_write_clear_pin(4);  //bomb5    
             }
             else{ 
                 gpio_set_level(bomba1_pin, 1);
@@ -745,23 +745,31 @@ void light_control(void *pvParameter)
         }
         else{
             veg=veg;
-            bloom=veg;
+            bloom=bloom;
         }
         if (veg==1){
-            pcf2_write_clear_pin(7);  //Ilu1 //inverted logic because of transistor
+            // ESP_LOGI("luz_test", "to no veg =1 ");
+            pcf2_write_clear_pin(7);  //Ilu1 //inverted logic because of board logic
             vTaskDelay(pdMS_TO_TICKS(100));
+           
         }
         else {       
-            pcf2_write_set_pin(7);  //Ilu1 //inverted logic because of transistor
+            //ESP_LOGI("luz_test", "to no veg =0 ");
+            pcf2_write_set_pin(7);  //Ilu1 //inverted logic because of board logic
             vTaskDelay(pdMS_TO_TICKS(100));
+            
         }
         if (bloom==1){
-            pcf2_write_clear_pin(1);  //Ilu2 //inverted logic because of transistor 
+            //ESP_LOGI("luz_test", "to no bloom =1 ");
+            pcf2_write_clear_pin(1);  //Ilu2 //inverted logic because of board logic
             vTaskDelay(pdMS_TO_TICKS(100));
+            
         }
         else{ 
-            pcf2_write_set_pin(1);  //Ilu2 //inverted logic because of transistor
+            //ESP_LOGI("luz_test", "to no bloom e veg  =0 ");
+            pcf2_write_set_pin(1);  //Ilu2 //inverted logic because of board logic
             vTaskDelay(pdMS_TO_TICKS(100)); 
+            
         }
         vTaskDelay(pdMS_TO_TICKS(2000));  
         //break;
@@ -856,12 +864,12 @@ void solution_level_control(void *pvParameter)
     {
         
         read_port=pcf1_read();
-        low_level_main = (read_port >> 0) & 1;
-        high_level_main = (read_port >> 1) & 1;
-        low_level_water = (read_port >> 2) & 1;
-        low_level_nutrients = (read_port >> 3) & 1;
-        low_level_ph_low = (read_port >> 4) & 1;
-        low_level_ph_high = (read_port >> 5) & 1;
+        low_level_main = (read_port >> 1) & 1;          // bomba 1
+        high_level_main = (read_port >> 4) & 1;         // bomba 1
+        low_level_water = (read_port >> 4) & 1;         // bomba 2
+        low_level_nutrients = (read_port >> 3) & 1;     // bomba 3
+        low_level_ph_low = (read_port >> 2) & 1;        // bomba 4
+        low_level_ph_high = (read_port >> 6) & 1;       // bomba 5
         teste = (read_port >> 7) & 1;
         //ESP_LOGI("teste_read_pin", "PIN port: %d\n", read_port);
         
@@ -878,12 +886,12 @@ void solution_level_control(void *pvParameter)
             gpio_set_level(bomba1_pin, 0);
             solution_control=1;
             ESP_LOGI("level_control", "Stop Solution Circulation due solution level too LOW. Turning on water bomb.");
-            pcf2_write_clear_pin(6);  //bomb2 //inverted logic because of transistor
+            pcf2_write_set_pin(6);  //bomb2 
             //vTaskDelay(pdMS_TO_TICKS(10000));
-            //pcf2_write_set_pin(6);  //bomb2 //inverted logic because of transistor
+            //pcf2_write_clear_pin(6);  //bomb2 
             
         } 
-        else {gpio_set_level(bomba1_pin, 1); pcf2_write_set_pin(6);} 
+        else {gpio_set_level(bomba1_pin, 1); pcf2_write_clear_pin(6);} 
         
         if (!high_level_main){ //if high level of main solution is achieved
             // Stop Solution Control
@@ -947,7 +955,7 @@ bool pcf2_read_pin(char pin_number)
 }
 
 
-void pcf1_write(uint16_t port_val)
+void pcf1_write(uint8_t port_val)
 {
     i2c_dev_t pcf8574;
 
@@ -972,7 +980,7 @@ uint8_t pcf1_read(void)
     return port_val;
 }
 
-void pcf2_write(uint16_t port_val)
+void pcf2_write(uint8_t port_val)
 {
     i2c_dev_t pcf8574;
 
@@ -1009,7 +1017,7 @@ void pcf_test2(void *pvParameters)
     ESP_ERROR_CHECK(pcf8574_init_desc(&pcf8574, PCF8574_2_BASE_ADDR, 0, I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
 
     // Do some blinking
-    uint16_t port_val = 0xaa;
+    uint8_t port_val = 0xa;
     while (1)
     {
         // invert value
@@ -1034,7 +1042,7 @@ void pcf_test1(void *pvParameters)
     ESP_ERROR_CHECK(pcf8574_init_desc(&pcf8574, PCF8574_1_BASE_ADDR, 0, I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO));
 
     // Do some blinking
-    uint16_t port_val = 0xaa;
+    uint8_t port_val = 0xa;
     while (1)
     {
         // invert value
@@ -1234,8 +1242,8 @@ void app_main(void)
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
-    ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
-    wifi_init_sta();
+    //ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
+    //wifi_init_sta();
     
     //ESP_LOGI("TESTE", "Primeiro GET");
     //rest_get();
@@ -1281,8 +1289,8 @@ void app_main(void)
     float ph_voltage;
     float temperature, humidity;
     
-    pcf1_write(0xFF);
-    pcf2_write(0xFF);
+    pcf1_write(port1_val);
+    pcf2_write(port2_val);
     
     dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
     vTaskDelay(100/portTICK_PERIOD_MS);
@@ -1304,12 +1312,12 @@ void app_main(void)
     //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
     //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
-    xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
-    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
-    //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
-    xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    //xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     while (1)
