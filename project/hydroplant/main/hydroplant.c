@@ -29,7 +29,7 @@
 #include "esp_netif.h"
 #include "esp_http_client.h"
 #include "my_data.h"
-#define BLINK_LED 2 
+#define BLINK_LED 2
 #include "esp_mac.h"
 
 #include "driver/i2c.h"
@@ -185,13 +185,13 @@ adc_oneshot_unit_init_cfg_t init_config1 = {
 float waterTemp = 25.0;
 float airTemp = 25.0;
 float target_airTemp = 25.0;
-float airHumi = 54.0;
-float PH = 9.0;
-float PPM = 700.0;
+float airHumi = 55.0;
+float PH = 7.5;
+float PPM = 750.0;
 float humi_min=50.0;
 float humi_max=80.0;
-float ph_min=7.0;
-float ph_max=8.0;
+float ph_min=5.5;
+float ph_max=6.5;
 float ppm_max=800.0;
 float ppm_min=600.0;
 uint8_t port1_val=0xFF;
@@ -640,8 +640,11 @@ void humi_control(void *pvParameter)
     while (1)
     {
        
-        if (airHumi<=humi_min)
-            pcf2_write_set_pin(2);      
+        if (airHumi<=humi_min){
+            pcf2_write_set_pin(2);
+            vTaskDelay(pdMS_TO_TICKS(4000));
+            pcf2_write_clear_pin(2);
+        }     
         else if (airHumi>=humi_max)
             pcf2_write_clear_pin(2);
         else 
@@ -671,9 +674,9 @@ void ph_control(void *pvParameter)
         }
         if (solution_control==1){
             if (PH<=ph_min){
-                pcf2_write_set_pin(5);  //bomb3  
+                pcf2_write_set_pin(6);  //bomb5  
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_clear_pin(5);  //bomb3
+                pcf2_write_clear_pin(6);  //bomb5
             }        
             else if (PH>=ph_max){
                 pcf2_write_set_pin(3);  //bomb4  
@@ -712,14 +715,14 @@ void ppm_control(void *pvParameter)
         }
         if (solution_control==1){    
             if (PPM<=ppm_min){
-                pcf2_write_set_pin(6);  //bomb2 
+                pcf2_write_set_pin(5);  //bomb3 
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_clear_pin(6);  //bomb2 
+                pcf2_write_clear_pin(5);  //bomb3 
             }        
             else if (PPM>=ppm_max){
-                pcf2_write_set_pin(4);  //bomb5 
+                pcf2_write_set_pin(4);  //bomb2 
                 vTaskDelay(pdMS_TO_TICKS(2000));
-                pcf2_write_clear_pin(4);  //bomb5    
+                pcf2_write_clear_pin(4);  //bomb2    
             }
             else{ 
                 gpio_set_level(bomba1_pin, 1);
@@ -796,11 +799,11 @@ void get_sensors(void *pvParameter)
             ESP_LOGI("Water_temp_test", "Water Temp: %.2f°C", waterTemp);
         
         //read air temp air humidity
-        //res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
-        //if (res != ESP_OK)
-        //    ESP_LOGI("DHT_test:","Could not read data from sensor");
-        //else
-        //    ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
+        res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
+        if (res != ESP_OK)
+            ESP_LOGI("DHT_test:","Could not read data from sensor");
+        else
+            ESP_LOGI("DHT_test:","Air Humidity: %f Air Temp: %fC", airHumi, airTemp);
         //read ph
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &adc_raw[0][0]));
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_0, adc_raw[0][0]);
@@ -809,7 +812,7 @@ void get_sensors(void *pvParameter)
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_0, voltage[0][0]);
         }
         ph_voltage = voltage[0][0];
-        convert_to_ph(ph_voltage);
+        PH=convert_to_ph(ph_voltage);
         //read ppm
         ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_2 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
@@ -818,7 +821,7 @@ void get_sensors(void *pvParameter)
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_2 + 1, ADC_CHANNEL_7, voltage[0][0]);
         }
         ppm_voltage = voltage[0][0];
-        convert_to_ppm(ppm_voltage,waterTemp);
+        PPM=convert_to_ppm(ppm_voltage,waterTemp);
         
         upload_app=1;
         //break;
@@ -859,17 +862,21 @@ void solution_level_control(void *pvParameter)
     bool low_level_ph_high=0;
     bool teste=0;
     uint8_t read_port=0;
+    uint8_t read_port2=0;
+    bool water_bomb=0;
     i2c_dev_t pcf8574;
     while(1)
     {
         
         read_port=pcf1_read();
-        low_level_main = (read_port >> 1) & 1;          // bomba 1
-        high_level_main = (read_port >> 4) & 1;         // bomba 1
+        read_port2=pcf2_read();
+        water_bomb = (read_port2 >> 4) & 1;
+        low_level_main = (read_port >> 6) & 1;          // bomba 1
+        high_level_main = (read_port >> 7) & 1;         // bomba 1
         low_level_water = (read_port >> 4) & 1;         // bomba 2
         low_level_nutrients = (read_port >> 3) & 1;     // bomba 3
-        low_level_ph_low = (read_port >> 2) & 1;        // bomba 4
-        low_level_ph_high = (read_port >> 6) & 1;       // bomba 5
+        low_level_ph_low = (read_port >> 5) & 1;        // bomba 4
+        low_level_ph_high = (read_port >> 2) & 1;       // bomba 5
         teste = (read_port >> 7) & 1;
         //ESP_LOGI("teste_read_pin", "PIN port: %d\n", read_port);
         
@@ -879,33 +886,54 @@ void solution_level_control(void *pvParameter)
         //low_level_nutrients=pcf1_read_pin(3);
         //low_level_ph_low=pcf1_read_pin(4);  
         //low_level_ph_high=pcf1_read_pin(5);
-
-
+        
+        /*ESP_LOGI("teste_read_pin", "Nivel alto principal: %d\n", high_level_main);
+        ESP_LOGI("teste_read_pin", "Nivel baixo principal: %d\n", low_level_main);
+        ESP_LOGI("teste_read_pin", "Nivel baixo bomba2: %d\n", low_level_water);
+        ESP_LOGI("teste_read_pin", "Nivel baixo bomba3: %d\n", low_level_nutrients);
+        ESP_LOGI("teste_read_pin", "Nivel baixo bomba4: %d\n", low_level_ph_low);
+        ESP_LOGI("teste_read_pin", "Nivel baixo bomba5: %d\n", low_level_ph_high);
+        ESP_LOGI("teste_read_pin", "water bomba: %d\n", water_bomb);
+        */
+        //ESP_LOGI("teste_read_pin", "water bomba: %d\n", water_bomb);
+        
         if (low_level_main){ //if low level of main solution is not achieved
             // Stop Solution Circulation
             gpio_set_level(bomba1_pin, 0);
             solution_control=1;
             ESP_LOGI("level_control", "Stop Solution Circulation due solution level too LOW. Turning on water bomb.");
-            pcf2_write_set_pin(6);  //bomb2 
+            pcf2_write_set_pin(4);  //bomb2 
             //vTaskDelay(pdMS_TO_TICKS(10000));
-            //pcf2_write_clear_pin(6);  //bomb2 
+            //pcf2_write_clear_pin(4);  //bomb2 
             
         } 
-        else {gpio_set_level(bomba1_pin, 1); pcf2_write_clear_pin(6);} 
+        else {
+            gpio_set_level(bomba1_pin, 1); 
+            
+            if (water_bomb==1){
+                pcf2_write_set_pin(4);
+            }
+            else {
+                if ((!(PPM>=ppm_max)) && (solution_control)){
+                    pcf2_write_clear_pin(4);
+                    //ESP_LOGI("level_control", "testeee");
+                }    
+                }
+        } 
         
         if (!high_level_main){ //if high level of main solution is achieved
             // Stop Solution Control
             solution_control=0;
             ESP_LOGI("level_control", "Stop Solution PH and PPM Control due solution level too High. Please remove solution excess manually.");
         }
-        else {solution_control=1;}
-
-        if (low_level_water || low_level_nutrients || low_level_ph_low || low_level_ph_high) { //if low level of any secondary solution is achieved
-        // Stop Solution Control
-        solution_control=0;
-        ESP_LOGI("level_control", "Stop Solution PH and PPM Control due lack of secondary solution. Please check the reservatories manually.");
+        else if (low_level_water || low_level_nutrients || low_level_ph_low || low_level_ph_high ) { //if low level of any secondary solution is achieved
+            // Stop Solution Control
+            solution_control=0;
+            ESP_LOGI("level_control", "Stop Solution PH and PPM Control due lack of secondary solution. Please check the reservatories manually.");
         }
-        else {solution_control=1;}
+        else {
+                solution_control=1;
+        }
 
         vTaskDelay(pdMS_TO_TICKS(300));
     }
@@ -1062,10 +1090,11 @@ float convert_to_ppm(float averageVoltage, float waterTemp){
     //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
     //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
     //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
-    float offset=30.0;
+    float offset=52.789410;
     float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
-    float compensationVolatge = (averageVoltage / compensationCoefficient)/1000;  //temperature compensation
-    float tdsValue = ((((133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5)/3472*0.9210)-offset); //convert voltage value to tds value
+    //averageVoltage=averageVoltage/(0.3472*0.9210);
+    float compensationVolatge = (averageVoltage / compensationCoefficient)*((0.9210))/1000;  //temperature compensation
+    float tdsValue = ((((133.42 * compensationVolatge * compensationVolatge * compensationVolatge) - (255.86 * compensationVolatge * compensationVolatge) + (857.39 * compensationVolatge)) * 0.5)-offset)*3.8; //convert voltage value to tds value
 
     //ESP_LOGI("TDS", "Volts per division = %f", vPerDiv);
     //ESP_LOGI("TDS", "Average Voltage = %f", averageVoltage);
@@ -1309,15 +1338,15 @@ void app_main(void)
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, LEDC_DUTY));
     // Update duty to apply the new value
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
-    //xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
+    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
     //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     //xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
-    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
-    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     while (1)
