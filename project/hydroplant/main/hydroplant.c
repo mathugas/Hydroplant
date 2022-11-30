@@ -76,10 +76,10 @@
 #define LEDC_CHANNEL            LEDC_CHANNEL_0
 #define LEDC_DUTY_RES           LEDC_TIMER_8_BIT // Set duty resolution to 13 bits
 #define LEDC_DUTY               (127) // Set duty to 50%. ((2 ** 8) - 1) * 50% = 4095
-#define LEDC_FREQUENCY          (25000) // Frequency in Hertz. Set frequency at 5 kHz
+#define LEDC_FREQUENCY          (1000) // Frequency in Hertz. Set frequency at 5 kHz
 
-#define SSID "ReggaeHouse2.4G"
-#define PASS "123456789"
+#define SSID "Chamat"
+#define PASS "987654320"
 
 #define EXAMPLE_ESP_WIFI_SSID      SSID
 #define EXAMPLE_ESP_WIFI_PASS      PASS
@@ -162,6 +162,7 @@ static int s_retry_num = 0;
 bool do_calibration1;
 bool do_calibration2;
 bool solution_control=1;
+bool stop_circulation=0;
 
 adc_cali_handle_t adc2_cali_handle = NULL;
 adc_oneshot_unit_handle_t adc2_handle;
@@ -184,7 +185,7 @@ adc_oneshot_unit_init_cfg_t init_config1 = {
 };
 float waterTemp = 25.0;
 float airTemp = 25.0;
-float target_airTemp = 25.0;
+float target_airTemp = 20.0;
 float airHumi = 55.0;
 float PH = 7.5;
 float PPM = 750.0;
@@ -193,7 +194,7 @@ float humi_max=80.0;
 float ph_min=5.5;
 float ph_max=6.5;
 float ppm_max=800.0;
-float ppm_min=600.0;
+float ppm_min=350.0;
 uint8_t port1_val=0xFF;
 uint8_t port2_val=0x00;
 bool upload_app=0;
@@ -660,18 +661,6 @@ void ph_control(void *pvParameter)
     while (1)
     {
        
-        if (PH<=(ph_min-2.0))
-        {
-                // Stop Solution Circulation due PH too LOW
-                gpio_set_level(bomba1_pin, 0);
-                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_min);
-        }
-        if (PH>=(ph_max+2.0))
-        {
-                // Stop Solution Circulation due PH too HIGH
-                gpio_set_level(bomba1_pin, 0);
-                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_max);
-        }
         if (solution_control==1){
             if (PH<=ph_min){
                 pcf2_write_set_pin(6);  //bomb5  
@@ -684,9 +673,12 @@ void ph_control(void *pvParameter)
                 pcf2_write_clear_pin(3);  //bomb4    
             }
             else {
-                gpio_set_level(bomba1_pin, 1);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-
+                if (stop_circulation==0)
+                {
+                
+                    gpio_set_level(bomba1_pin, 1);
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                }
             }
         }
         //break;
@@ -701,18 +693,7 @@ void ppm_control(void *pvParameter)
     while (1)
     {
         
-        if (PPM<=(ppm_min-200.0))
-        {
-                // Stop Solution Circulation due PPM too LOW
-                gpio_set_level(bomba1_pin, 0);
-                ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too LOW: %.2f. Limit is %.2f", PPM, ppm_min);
-        }
-        if (PPM>=(ppm_max+200.0))
-        {
-                // Stop Solution Circulation due PPM too HIGH
-                gpio_set_level(bomba1_pin, 0);
-                ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too High: %.2f. Limit is %.2f", PPM, ppm_max);
-        }
+
         if (solution_control==1){    
             if (PPM<=ppm_min){
                 pcf2_write_set_pin(5);  //bomb3 
@@ -725,9 +706,11 @@ void ppm_control(void *pvParameter)
                 pcf2_write_clear_pin(4);  //bomb2    
             }
             else{ 
-                gpio_set_level(bomba1_pin, 1);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-
+                if (stop_circulation==0){
+                    gpio_set_level(bomba1_pin, 1);
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    //ESP_LOGI("ppm_control", "estou aqui");
+                }
             }
         }
         //break;
@@ -799,11 +782,11 @@ void get_sensors(void *pvParameter)
             ESP_LOGI("Water_temp_test", "Water Temp: %.2f°C", waterTemp);
         
         //read air temp air humidity
-        res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
-        if (res != ESP_OK)
-            ESP_LOGI("DHT_test:","Could not read data from sensor");
-        else
-            ESP_LOGI("DHT_test:","Air Humidity: %f Air Temp: %fC", airHumi, airTemp);
+        //res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
+        //if (res != ESP_OK)
+        //    ESP_LOGI("DHT_test:","Could not read data from sensor");
+        //else
+        //    ESP_LOGI("DHT_test:","Air Humidity: %f Air Temp: %fC", airHumi, airTemp);
         //read ph
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_0, &adc_raw[0][0]));
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_0, adc_raw[0][0]);
@@ -825,7 +808,7 @@ void get_sensors(void *pvParameter)
         
         upload_app=1;
         //break;
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
     //vTaskDelete(NULL);
 }
@@ -851,6 +834,42 @@ void app_get(void *pvParameter)
     }
 }
 
+void critical_levels(void *pvParameter)
+{
+    while(1)
+    {
+         if (PH<=(ph_min-2.0))
+        {
+                // Stop Solution Circulation due PH too LOW
+                gpio_set_level(bomba1_pin, 0);
+                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_min);
+                stop_circulation=1;
+        }
+        else if (PH>=(ph_max+2.0))
+        {
+                // Stop Solution Circulation due PH too HIGH
+                gpio_set_level(bomba1_pin, 0);
+                ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_max);
+                stop_circulation=1;
+        }
+        else if (PPM<=(ppm_min-200.0))
+        {
+                // Stop Solution Circulation due PPM too LOW
+                gpio_set_level(bomba1_pin, 0);
+                ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too LOW: %.2f. Limit is %.2f", PPM, ppm_min);
+                stop_circulation=1;
+        }
+        else if (PPM>=(ppm_max+200.0))
+        {
+                // Stop Solution Circulation due PPM too HIGH
+                gpio_set_level(bomba1_pin, 0);
+                ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too High: %.2f. Limit is %.2f", PPM, ppm_max);
+                stop_circulation=1;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+       
 
 void solution_level_control(void *pvParameter)
 {
@@ -908,8 +927,9 @@ void solution_level_control(void *pvParameter)
             
         } 
         else {
-            gpio_set_level(bomba1_pin, 1); 
-            
+            if (stop_circulation==0){
+                gpio_set_level(bomba1_pin, 1); 
+            }
             if (water_bomb==1){
                 pcf2_write_set_pin(4);
             }
@@ -1090,7 +1110,7 @@ float convert_to_ppm(float averageVoltage, float waterTemp){
     //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
     //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
     //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
-    float offset=52.789410;
+    float offset=47.789410;
     float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
     //averageVoltage=averageVoltage/(0.3472*0.9210);
     float compensationVolatge = (averageVoltage / compensationCoefficient)*((0.9210))/1000;  //temperature compensation
@@ -1127,9 +1147,9 @@ double clamp(double value, double min, double max){
 uint64_t lastTime;
 double Input, Output, Setpoint;
 double errSum, lastErr;
-double kp=80, ki=0, kd=0;
-double omax=255;
-double omin=-255;
+double kp=60, ki=0, kd=0;
+double omax=256;
+double omin=-256;
 double iterm;
 void Compute()
 {
@@ -1140,7 +1160,7 @@ void Compute()
         ESP_LOGI("DHT_test:","Could not read data from sensor");
     else
     ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
-    
+    ESP_LOGI("DHT_test:"," Air Temp Target: %.1fC", target_airTemp);
     Input= airTemp;
     Setpoint = target_airTemp;
     
@@ -1160,7 +1180,7 @@ void Compute()
 	else if (iterm < omin){
 		iterm = omin; 
     }
-    Output = kp * error + iterm + kd * dErr;
+    Output = (kp * error) + iterm + (kd * dErr);
     // Apply limit to output value
 	
     if (Output > omax){
@@ -1173,6 +1193,7 @@ void Compute()
     lastErr = error;
     lastTime = now;
     Output=-Output;
+    Output= omax-Output;
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, Output));
     // Update duty to apply the new value
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0));
@@ -1183,7 +1204,7 @@ void Compute()
     // Update duty to apply the new value
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
     ESP_LOGI("PID", "Duty = %lf", Output);
-    ESP_LOGI("PID", "errorsum = %lf", errSum);
+    //ESP_LOGI("PID", "errorsum = %lf", errSum);
     ESP_LOGI("PID", "error = %lf", error);
 
 }
@@ -1271,7 +1292,7 @@ void app_main(void)
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
-    //ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
+    ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
     //wifi_init_sta();
     
     //ESP_LOGI("TESTE", "Primeiro GET");
@@ -1338,15 +1359,15 @@ void app_main(void)
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, LEDC_DUTY));
     // Update duty to apply the new value
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
-    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
+    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,0);
     //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
-    //xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
-    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
-    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     while (1)
@@ -1395,9 +1416,9 @@ void app_main(void)
             vTaskDelay(12000/portTICK_PERIOD_MS);
             //ESP_LOGI("led", "blink1");
             //test = ~test;
-            target_airTemp=23.00;
-            vTaskDelay(12000/portTICK_PERIOD_MS);
-            target_airTemp=25.00;
+            //target_airTemp=23.00;
+            //vTaskDelay(12000/portTICK_PERIOD_MS);
+            //target_airTemp=26.8;
             //gpio_set_level(bomba1_pin, 0);
             //gpio_set_level(fan3_4_pin, 0);
             //gpio_set_level(fan1_2_pin, 0);
