@@ -197,6 +197,7 @@ float ppm_max=800.0;
 float ppm_min=350.0;
 uint8_t port1_val=0xFF;
 uint8_t port2_val=0x00;
+uint32_t counter=0x00;
 bool upload_app=0;
 bool veg=0;
 bool bloom=0;
@@ -436,7 +437,7 @@ void get_decode()
         result=strstr(message_get, t);
     for (i=0; i<size; i++){
 
-        aux2[i]=*(result + (30+i));
+        aux2[i]=*(result + (29+i));
         if (i==size) {aux2[i]=0;}
     }
     
@@ -446,7 +447,7 @@ void get_decode()
         result=strstr(message_get,lum);
     for (i=0; i<size; i++){
 
-        aux2[i]=*(result + (30+i));
+        aux2[i]=*(result + (31+i));
         if (i==size) {aux2[i]=0;}
     }
     
@@ -477,6 +478,17 @@ void get_decode()
         veg_bloom=veg_bloom;
     }
     printf("novo resultado luminosidade: %.2f \n",lumi);
+    
+    //result=strstr(message_get, c);
+    //for (i=0; i<size; i++){
+    //
+    //    aux2[i]=*(result + (29+i));
+    //    if (i==size) {aux2[i]=0;}
+    //}
+    
+    //target_airTemp= strtof(aux2, NULL);
+    //printf("novo resultado airTemp: %.2f \n",target_airTemp);
+
 
 }
 
@@ -527,11 +539,11 @@ static void post_test()
     //const char *post_data = "{'fields':{\"wt\":{'stringValue':'10'}}}";
     char message[300];
     //snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
-    snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'0'}}}", waterTemp, airTemp, PH, PPM, airHumi);
+    snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'%ld'}}}", waterTemp, airTemp, PH, PPM, airHumi, counter);
     const char *post_data = message;
     esp_http_client_handle_t client = esp_http_client_init(&config_post);
     
-    esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/posts/documents/ReceivingValuesEsp/.json");
+    esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
@@ -797,12 +809,20 @@ void get_sensors(void *pvParameter)
         ph_voltage = voltage[0][0];
         PH=convert_to_ph(ph_voltage);
         //read ppm
-        ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
-        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_2 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
-        if (do_calibration2) {
-        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc2_cali_handle, adc_raw[0][0], &voltage[0][0]));
-        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_2 + 1, ADC_CHANNEL_7, voltage[0][0]);
+        //ESP_ERROR_CHECK(adc_oneshot_read(adc2_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
+        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_2 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
+        //if (do_calibration2) {
+        //ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc2_cali_handle, adc_raw[0][0], &voltage[0][0]));
+        //ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_2 + 1, ADC_CHANNEL_7, voltage[0][0]);
+        //}
+        
+        ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
+        if (do_calibration1) {
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_handle, adc_raw[0][0], &voltage[0][0]));
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_7, voltage[0][0]);
         }
+        
         ppm_voltage = voltage[0][0];
         PPM=convert_to_ppm(ppm_voltage,waterTemp);
         
@@ -819,8 +839,9 @@ void app_post(void *pvParameter)
     while(1)
     {
         post_test();
+        counter++;
         upload_app=0;
-        vTaskDelay(pdMS_TO_TICKS(100000));
+        vTaskDelay(pdMS_TO_TICKS(30000));
     }
 }
 
@@ -1226,7 +1247,17 @@ void pid_update(void *pvParameter)
     }
 }
 
-
+void wifi_start(void *pvParameter)
+{
+    ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
+    wifi_init_sta();
+    while(1)
+    {
+        
+        break;
+    }
+    vTaskDelete(NULL);
+}
 
 
 void app_main(void)
@@ -1270,7 +1301,7 @@ void app_main(void)
     //    .atten = ADC_ATTEN_DB_0,
     //};
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_0, &config1));
-
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC_CHANNEL_7, &config1));
 
     //-------------ADC1 Calibration Init---------------//
     //adc_cali_handle_t adc1_cali_handle = NULL;
@@ -1282,18 +1313,17 @@ void app_main(void)
     //    .unit_id = ADC_UNIT_2,
     //    .ulp_mode = ADC_ULP_MODE_DISABLE,
     //};
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config2, &adc2_handle));
+    //ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config2, &adc2_handle));
 
     //-------------ADC2 Calibration Init---------------//
     //adc_cali_handle_t adc2_cali_handle = NULL;
-    do_calibration2 = example_adc_calibration_init(ADC_UNIT_2, ADC_ATTEN_DB_11, &adc2_cali_handle);
+    //do_calibration2 = example_adc_calibration_init(ADC_UNIT_2, ADC_ATTEN_DB_11, &adc2_cali_handle);
 
     //-------------ADC2 Config---------------//
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
+    //ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
-    ESP_LOGI("wifi station", "ESP_WIFI_MODE_STA");
-    //wifi_init_sta();
+    //xTaskCreatePinnedToCore(wifi_start, "wifi", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
     
     //ESP_LOGI("TESTE", "Primeiro GET");
     //rest_get();
@@ -1346,6 +1376,7 @@ void app_main(void)
     vTaskDelay(100/portTICK_PERIOD_MS);
 
     
+    vTaskDelay(5000/portTICK_PERIOD_MS);
     // Start System Operation
     gpio_set_level(bomba1_pin, 1);
     // Set the LEDC peripheral configuration
@@ -1358,16 +1389,18 @@ void app_main(void)
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_1));
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, LEDC_DUTY));
     // Update duty to apply the new value
-    ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
+    //ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
     xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,0);
     //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    
+   
     xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
     xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
-    xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
     xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
-    xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     while (1)
@@ -1440,10 +1473,10 @@ void app_main(void)
     }
     
      //Tear Down
-    ESP_ERROR_CHECK(adc_oneshot_del_unit(adc2_handle));
-    if (do_calibration2) {
-        example_adc_calibration_deinit(adc2_cali_handle);
-    }
+    //ESP_ERROR_CHECK(adc_oneshot_del_unit(adc2_handle));
+    //if (do_calibration2) {
+    //    example_adc_calibration_deinit(adc2_cali_handle);
+    //}
     //put_test();
     //rest_get();
 }
