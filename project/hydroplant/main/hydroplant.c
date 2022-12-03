@@ -163,6 +163,7 @@ bool do_calibration1;
 bool do_calibration2;
 bool solution_control=1;
 bool stop_circulation=0;
+bool stop_circulation_critc=0;
 
 adc_cali_handle_t adc2_cali_handle = NULL;
 adc_oneshot_unit_handle_t adc2_handle;
@@ -185,11 +186,11 @@ adc_oneshot_unit_init_cfg_t init_config1 = {
 };
 float waterTemp = 25.0;
 float airTemp = 25.0;
-float target_airTemp = 20.0;
+float target_airTemp = 25.0;
 float airHumi = 55.0;
 float PH = 7.5;
 float PPM = 750.0;
-float humi_min=50.0;
+float humi_min=75.0;
 float humi_max=80.0;
 float ph_min=5.5;
 float ph_max=6.5;
@@ -214,6 +215,226 @@ void pcf2_write_set_pin(char pin_number);
 void pcf2_write_clear_pin(char pin_number);
 bool pcf1_read_pin(char pin_number);
 bool pcf2_read_pin(char pin_number);
+
+#include <ets_sys.h>
+#include <esp_idf_lib_helpers.h>
+
+// DHT timer precision in microseconds
+#define DHT_TIMER_INTERVAL 2
+#define DHT_DATA_BITS 40
+#define DHT_DATA_BYTES (DHT_DATA_BITS / 8)
+
+/*
+ *  Note:
+ *  A suitable pull-up resistor should be connected to the selected GPIO line
+ *
+ *  __           ______          _______                              ___________________________
+ *    \    A    /      \   C    /       \   DHT duration_data_low    /                           \
+ *     \_______/   B    \______/    D    \__________________________/   DHT duration_data_high    \__
+ *
+ *
+ *  Initializing communications with the DHT requires four 'phases' as follows:
+ *
+ *  Phase A - MCU pulls signal low for at least 18000 us
+ *  Phase B - MCU allows signal to float back up and waits 20-40us for DHT to pull it low
+ *  Phase C - DHT pulls signal low for ~80us
+ *  Phase D - DHT lets signal float back up for ~80us
+ *
+ *  After this, the DHT transmits its first bit by holding the signal low for 50us
+ *  and then letting it float back high for a period of time that depends on the data bit.
+ *  duration_data_high is shorter than 50us for a logic '0' and longer than 50us for logic '1'.
+ *
+ *  There are a total of 40 data bits transmitted sequentially. These bits are read into a byte array
+ *  of length 5.  The first and third bytes are humidity (%) and temperature (C), respectively.  Bytes 2 and 4
+ *  are zero-filled and the fifth is a checksum such that:
+ *
+ *  byte_5 == (byte_1 + byte_2 + byte_3 + byte_4) & 0xFF
+ *
+ */
+
+static const char *TAG = "dht";
+
+#if HELPER_TARGET_IS_ESP32
+static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+#define PORT_ENTER_CRITICAL() portENTER_CRITICAL(&mux)
+#define PORT_EXIT_CRITICAL() portEXIT_CRITICAL(&mux)
+
+#elif HELPER_TARGET_IS_ESP8266
+#define PORT_ENTER_CRITICAL() portENTER_CRITICAL()
+#define PORT_EXIT_CRITICAL() portEXIT_CRITICAL()
+#endif
+
+#define CHECK_ARG(VAL) do { if (!(VAL)) return ESP_ERR_INVALID_ARG; } while (0)
+
+#define CHECK_LOGE(x, msg, ...) do { \
+        esp_err_t __; \
+        if ((__ = x) != ESP_OK) { \
+            PORT_EXIT_CRITICAL(); \
+            ESP_LOGE(TAG, msg, ## __VA_ARGS__); \
+            return __; \
+        } \
+    } while (0)
+
+
+/**
+ * Wait specified time for pin to go to a specified state.
+ * If timeout is reached and pin doesn't go to a requested state
+ * false is returned.
+ * The elapsed time is returned in pointer 'duration' if it is not NULL.
+ */
+static esp_err_t dht_await_pin_state(gpio_num_t pin, uint32_t timeout,
+       int expected_pin_state, uint32_t *duration)
+{
+    /* XXX dht_await_pin_state() should save pin direction and restore
+     * the direction before return. however, the SDK does not provide
+     * gpio_get_direction().
+     */
+    gpio_set_direction(pin, GPIO_MODE_INPUT);
+    for (uint32_t i = 0; i < timeout; i += DHT_TIMER_INTERVAL)
+    {
+        // need to wait at least a single interval to prevent reading a jitter
+        ets_delay_us(DHT_TIMER_INTERVAL);
+        if (gpio_get_level(pin) == expected_pin_state)
+        {
+            if (duration)
+                *duration = i;
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_TIMEOUT;
+}
+
+/**
+ * Request data from DHT and read raw bit stream.
+ * The function call should be protected from task switching.
+ * Return false if error occurred.
+ */
+static inline esp_err_t dht_fetch_data(dht_sensor_type_t sensor_type, gpio_num_t pin, uint8_t data[DHT_DATA_BYTES])
+{
+    uint32_t low_duration;
+    uint32_t high_duration;
+
+    // Phase 'A' pulling signal low to initiate read sequence
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(pin, 0);
+    ets_delay_us(sensor_type == DHT_TYPE_SI7021 ? 500 : 20000);
+    gpio_set_level(pin, 1);
+
+    // Step through Phase 'B', 40us
+    CHECK_LOGE(dht_await_pin_state(pin, 40, 0, NULL),
+            "Initialization error, problem in phase 'B'");
+    // Step through Phase 'C', 88us
+    CHECK_LOGE(dht_await_pin_state(pin, 88, 1, NULL),
+            "Initialization error, problem in phase 'C'");
+    // Step through Phase 'D', 88us
+    CHECK_LOGE(dht_await_pin_state(pin, 88, 0, NULL),
+            "Initialization error, problem in phase 'D'");
+
+    // Read in each of the 40 bits of data...
+    for (int i = 0; i < DHT_DATA_BITS; i++)
+    {
+        CHECK_LOGE(dht_await_pin_state(pin, 65, 1, &low_duration),
+                "LOW bit timeout");
+        CHECK_LOGE(dht_await_pin_state(pin, 75, 0, &high_duration),
+                "HIGH bit timeout");
+
+        uint8_t b = i / 8;
+        uint8_t m = i % 8;
+        if (!m)
+            data[b] = 0;
+
+        data[b] |= (high_duration > low_duration) << (7 - m);
+    }
+
+    return ESP_OK;
+}
+
+/**
+ * Pack two data bytes into single value and take into account sign bit.
+ */
+static inline int16_t dht_convert_data_2(dht_sensor_type_t sensor_type, uint8_t msb, uint8_t lsb)
+{
+    int16_t data;
+    const int8_t scale=256;
+
+    if (sensor_type == DHT_TYPE_DHT11)
+    {
+        //data=msb*10;
+        data = msb * 100;
+        data = data+(lsb);
+        //printf("teste msb %d lsb: %d data %d", msb, lsb , data);
+        data = data/10;
+    }
+    else
+    {
+        data = msb;
+        data <<= 8;
+        data |= lsb;
+        if (msb & BIT(7))
+            data = -data;       // convert it to negative
+    }
+
+    return data;
+}
+
+esp_err_t dht_read_data(dht_sensor_type_t sensor_type, gpio_num_t pin,
+        int16_t *humidity, int16_t *temperature)
+{
+    CHECK_ARG(humidity || temperature);
+
+    uint8_t data[DHT_DATA_BYTES] = { 0 };
+
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(pin, 1);
+
+    PORT_ENTER_CRITICAL();
+    esp_err_t result = dht_fetch_data(sensor_type, pin, data);
+    if (result == ESP_OK)
+        PORT_EXIT_CRITICAL();
+
+    /* restore GPIO direction because, after calling dht_fetch_data(), the
+     * GPIO direction mode changes */
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(pin, 1);
+
+    if (result != ESP_OK)
+        return result;
+
+    if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+    {
+        ESP_LOGE(TAG, "Checksum failed, invalid data received from sensor");
+        return ESP_ERR_INVALID_CRC;
+    }
+
+    if (humidity)
+        *humidity = dht_convert_data_2(sensor_type, data[0], data[1]);
+    if (temperature)
+        *temperature = dht_convert_data_2(sensor_type, data[2], data[3]);
+
+    ESP_LOGD(TAG, "Sensor data: humidity=%d, temp=%d", *humidity, *temperature);
+
+    return ESP_OK;
+}
+
+esp_err_t dht_read_float_data_2(dht_sensor_type_t sensor_type, gpio_num_t pin,
+        float *humidity, float *temperature)
+{
+    CHECK_ARG(humidity || temperature);
+
+    int16_t i_humidity, i_temp;
+
+    esp_err_t res = dht_read_data(sensor_type, pin, humidity ? &i_humidity : NULL, temperature ? &i_temp : NULL);
+    if (res != ESP_OK)
+        return res;
+
+    if (humidity)
+        *humidity = i_humidity / 100.0;
+    if (temperature)
+        *temperature = i_temp / 100.0;
+
+    return ESP_OK;
+}
 
 
 static void event_handler(void* arg, esp_event_base_t event_base,
@@ -552,6 +773,9 @@ static void post_test()
         ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %lld",
                 esp_http_client_get_status_code(client),
                 esp_http_client_get_content_length(client));
+                if (esp_http_client_get_status_code(client)==200){
+                    counter++;
+                }
     } else {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
     }
@@ -620,8 +844,8 @@ void dht_test(void *pvParameters)
     float temperature, humidity;
         while (1)
         {
-            if (dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature) == ESP_OK)
-                ESP_LOGI("DHT_test:","Air Humidity: %.1f%% Air Temp: %.1fC", humidity, temperature);
+            if (dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature) == ESP_OK)
+                ESP_LOGI("DHT_test:","Air Humidity: %.3f%% Air Temp: %.3fC", humidity, temperature);
             else
                 ESP_LOGI("DHT_test:","Could not read data from sensor");
             vTaskDelay(pdMS_TO_TICKS(500)); //break; 
@@ -655,7 +879,7 @@ void humi_control(void *pvParameter)
        
         if (airHumi<=humi_min){
             pcf2_write_set_pin(2);
-            vTaskDelay(pdMS_TO_TICKS(4000));
+            vTaskDelay(pdMS_TO_TICKS(8000));
             pcf2_write_clear_pin(2);
         }     
         else if (airHumi>=humi_max)
@@ -685,7 +909,7 @@ void ph_control(void *pvParameter)
                 pcf2_write_clear_pin(3);  //bomb4    
             }
             else {
-                if (stop_circulation==0)
+                if (stop_circulation==0 && stop_circulation_critc)
                 {
                 
                     gpio_set_level(bomba1_pin, 1);
@@ -718,7 +942,7 @@ void ppm_control(void *pvParameter)
                 pcf2_write_clear_pin(4);  //bomb2    
             }
             else{ 
-                if (stop_circulation==0){
+                if (stop_circulation==0 && stop_circulation_critc==0){
                     gpio_set_level(bomba1_pin, 1);
                     vTaskDelay(pdMS_TO_TICKS(2000));
                     //ESP_LOGI("ppm_control", "estou aqui");
@@ -839,7 +1063,7 @@ void app_post(void *pvParameter)
     while(1)
     {
         post_test();
-        counter++;
+        
         upload_app=0;
         vTaskDelay(pdMS_TO_TICKS(30000));
     }
@@ -864,29 +1088,30 @@ void critical_levels(void *pvParameter)
                 // Stop Solution Circulation due PH too LOW
                 gpio_set_level(bomba1_pin, 0);
                 ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_min);
-                stop_circulation=1;
+                stop_circulation_critc=1;
         }
         else if (PH>=(ph_max+2.0))
         {
                 // Stop Solution Circulation due PH too HIGH
                 gpio_set_level(bomba1_pin, 0);
                 ESP_LOGI("ph_control", "Stop Solution Circulation due PH too High: %.2f. Limit is %.2f", PH, ph_max);
-                stop_circulation=1;
+                stop_circulation_critc=1;
         }
         else if (PPM<=(ppm_min-200.0))
         {
                 // Stop Solution Circulation due PPM too LOW
                 gpio_set_level(bomba1_pin, 0);
                 ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too LOW: %.2f. Limit is %.2f", PPM, ppm_min);
-                stop_circulation=1;
+                stop_circulation_critc=1;
         }
         else if (PPM>=(ppm_max+200.0))
         {
                 // Stop Solution Circulation due PPM too HIGH
                 gpio_set_level(bomba1_pin, 0);
                 ESP_LOGI("ppm_control", "Stop Solution Circulation due PPM too High: %.2f. Limit is %.2f", PPM, ppm_max);
-                stop_circulation=1;
+                stop_circulation_critc=1;
         }
+        else {stop_circulation_critc=0; }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
@@ -941,22 +1166,22 @@ void solution_level_control(void *pvParameter)
             // Stop Solution Circulation
             gpio_set_level(bomba1_pin, 0);
             solution_control=1;
-            ESP_LOGI("level_control", "Stop Solution Circulation due solution level too LOW. Turning on water bomb.");
-            pcf2_write_set_pin(4);  //bomb2 
+            ESP_LOGI("level_control", "Stop Solution Circulation due solution level too LOW. Please fill the main reservatory with water until the minimum level");
+            //pcf2_write_set_pin(4);  //bomb2 
             //vTaskDelay(pdMS_TO_TICKS(10000));
             //pcf2_write_clear_pin(4);  //bomb2 
             
         } 
         else {
-            if (stop_circulation==0){
+            if (stop_circulation==0 && stop_circulation_critc==0){
                 gpio_set_level(bomba1_pin, 1); 
             }
             if (water_bomb==1){
-                pcf2_write_set_pin(4);
+            //    pcf2_write_set_pin(4);
             }
             else {
                 if ((!(PPM>=ppm_max)) && (solution_control)){
-                    pcf2_write_clear_pin(4);
+                    //pcf2_write_clear_pin(4);
                     //ESP_LOGI("level_control", "testeee");
                 }    
                 }
@@ -1168,7 +1393,7 @@ double clamp(double value, double min, double max){
 uint64_t lastTime;
 double Input, Output, Setpoint;
 double errSum, lastErr;
-double kp=60, ki=0, kd=0;
+double kp=200, ki=0, kd=0;
 double omax=256;
 double omin=-256;
 double iterm;
@@ -1176,12 +1401,12 @@ void Compute()
 {
     esp_err_t res;
     /*How long since we last calculated*/
-    res = dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
+    res = dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &airHumi, &airTemp);
     if (res != ESP_OK)
         ESP_LOGI("DHT_test:","Could not read data from sensor");
     else
-    ESP_LOGI("DHT_test:","Air Humidity: %.1f Air Temp: %.1fC", airHumi, airTemp);
-    ESP_LOGI("DHT_test:"," Air Temp Target: %.1fC", target_airTemp);
+    ESP_LOGI("DHT_test:","Air Humidity: %.2f Air Temp: %.2fC", airHumi, airTemp);
+    ESP_LOGI("DHT_test:"," Air Temp Target: %.2fC", target_airTemp);
     Input= airTemp;
     Setpoint = target_airTemp;
     
@@ -1211,6 +1436,8 @@ void Compute()
 		Output= omin;  
     }
     /*Remember some variables for next time*/
+    if (error>0)
+    {Output=0;}
     lastErr = error;
     lastTime = now;
     Output=-Output;
@@ -1265,7 +1492,7 @@ void app_main(void)
     //Initialize NVS
     gpio_reset_pin(bomba1_pin);
     gpio_set_direction(bomba1_pin, GPIO_MODE_OUTPUT);
-    gpio_set_level(bomba1_pin, 1);
+    gpio_set_level(bomba1_pin, 0);
     gpio_reset_pin(sw1_pin);
     gpio_set_direction(sw1_pin, GPIO_MODE_INPUT); 
     gpio_reset_pin(sw2_pin);
@@ -1279,7 +1506,7 @@ void app_main(void)
     gpio_reset_pin(motor5_pin);
     gpio_set_direction(motor5_pin, GPIO_MODE_OUTPUT);
     ESP_ERROR_CHECK(i2cdev_init());
-
+    gpio_pullup_dis(26);
     //ESP_ERROR_CHECK(i2c_master_init());
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -1372,7 +1599,7 @@ void app_main(void)
     pcf1_write(port1_val);
     pcf2_write(port2_val);
     
-    dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
+    dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
     vTaskDelay(100/portTICK_PERIOD_MS);
 
     
@@ -1395,14 +1622,21 @@ void app_main(void)
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     
    
-    xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
-    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+  //  xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
     //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
     //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    //xTaskCreatePinnedToCore(critical_levels, "solution_level_control_critical_levels", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+
+    
+    
+    
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
     //xTaskCreate(pcf_test2, "pcf_test2", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL);
+    
+
     while (1)
     {
             //vTaskDelay(500/portTICK_PERIOD_MS);
@@ -1415,8 +1649,8 @@ void app_main(void)
             // write value to port
             //pcf8574_port_write(&pcf8574, port_val);
             
-            //dht_read_float_data(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
-            //ESP_LOGI("DHT_test:","Air Humidity: %.1f%% Air Temp: %.1fC", humidity, temperature);
+            dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
+            ESP_LOGI("DHT_test:","Air Humidity: %.2f%% Air Temp: %.2fC", humidity, temperature);
            //patch_test();
             
             
@@ -1446,7 +1680,7 @@ void app_main(void)
             //post_test();
             //target_airTemp=24.00;
 
-            vTaskDelay(12000/portTICK_PERIOD_MS);
+            vTaskDelay(2000/portTICK_PERIOD_MS);
             //ESP_LOGI("led", "blink1");
             //test = ~test;
             //target_airTemp=23.00;
