@@ -39,6 +39,8 @@
 #include <pcf8574.h>
 #include <ds18x20.h>
 #include <inttypes.h>
+//#include "driver/adc.h"
+
 
 
 //#if defined(CONFIG_EXAMPLE_TYPE_DHT11)
@@ -56,11 +58,11 @@
 #define TEMP_SENSOR_GPIO 25
 #define TEMP_SENSOR_ADDR 0x7a3c1bf649551728
 
-#define TDS_NUM_SAMPLES             10  //(int) Number of reading to take for an average
-#define TDS_SAMPLE_PERIOD           20  //(int) Sample period (delay between samples == sample period / number of readings)
-#define TDS_TEMPERATURE             18.0  //(float) Temperature of water (we should measure this with a sensor to get an accurate reading)
-
-#define TDS_VREF                    1.18   //(float) Voltage reference for ADC. We should measure the actual value of each ESP32
+//#define TDS_NUM_SAMPLES             10  //(int) Number of reading to take for an average
+//#define TDS_SAMPLE_PERIOD           20  //(int) Sample period (delay between samples == sample period / number of readings)
+////#define TDS_TEMPERATURE             18.0  //(float) Temperature of water (we should measure this with a sensor to get an accurate reading)
+//
+//#define TDS_VREF                    1.18   //(float) Voltage reference for ADC. We should measure the actual value of each ESP32
 
 /* The examples use WiFi configuration that you can set via project configuration menu
    If you'd rather not, just change the below entries to strings with
@@ -203,7 +205,7 @@ bool upload_app=0;
 bool veg=0;
 bool bloom=0;
 bool veg_bloom=1;
-float convert_to_ppm(float averageVoltage, float waterTemp);
+float convert_to_ppm(float analogReading, float waterTemp);
 float convert_to_ph(float averageVoltage);
 void pcf1_write(uint8_t port_val);
 void pcf2_write(uint8_t port_val);
@@ -275,6 +277,105 @@ static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
         } \
     } while (0)
 
+//#define TDS_ENABLE_GPIO     GPIO_NUM_32 //Note: Power from GPIO is 12mA, board requires 3~6mA, so enable pin powers board
+#define TDS_ANALOG_GPIO     ADC_CHANNEL_7 //ADC1 is availalbe on pins 15, 34, 35 & 36
+
+#define TDS_STABILISATION_DELAY     10  //(int) How long to wait (in seconds) after enabling sensor before taking a reading
+#define TDS_NUM_SAMPLES             5  //(int) Number of reading to take for an average
+#define TDS_SAMPLE_PERIOD           5  //(int) Sample period (delay between samples == sample period / number of readings)
+//#define TDS_TEMPERATURE             18.0  //(float) Temperature of water (we should measure this with a sensor to get an accurate reading)
+#define TDS_VREF                    1.18   //(float) Voltage reference for ADC. We should measure the actual value of each ESP32
+
+static const char *TDS = "TDS INFO";
+float sampleDelay = (TDS_SAMPLE_PERIOD / TDS_NUM_SAMPLES) * 1000;
+
+//oid expose_vref(){
+//   // Expose the ADC VREF to a GPIO so we can measure it rather than assume it is 1.1v
+//   ESP_ERROR_CHECK(adc_vref_to_gpio(ADC_UNIT_1,GPIO_NUM_25));
+//   ESP_LOGI(TDS, "VREF routed to ADC1, pin 25\n");
+//
+
+void config_pins(){
+    ESP_LOGI(TDS, "Configure pins required for TDS sensor.");
+    // Pin to power the TDS sensor
+    //esp_rom_gpio_pad_select_gpio()(TDS_ENABLE_GPIO);
+    //gpio_set_direction(TDS_ENABLE_GPIO, GPIO_MODE_OUTPUT);
+    // Pin to read the TDS sensor analog output
+    //adc_config_width(ADC_WIDTH_BIT_12);
+    //adc_config_channel_atten(TDS_ANALOG_GPIO, ADC_ATTEN_DB_11);
+}
+
+//void enable_tds_sensor(){
+//    ESP_LOGI(TDS, "Enabling TDS sensor & waiting 10 seconds.");
+//    //gpio_set_level(TDS_ENABLE_GPIO, 1);
+//    // Wait 10 seconds
+//    vTaskDelay(10000 / portTICK_PERIOD_MS);
+//}
+//
+//void disable_tds_sensor(){
+//    ESP_LOGI(TDS, "Disabling TDS sensor.");
+//    gpio_set_level(TDS_ENABLE_GPIO, 0);
+//}
+
+float read_tds_sensor(int numSamples, float sampleDelay){
+    // Take n sensor readings every p millseconds where n is numSamples, and p is sampleDelay.
+    // Return the average sample value.
+    uint32_t runningSampleValue = 0;
+
+    for(int i = 0; i < numSamples; i++) {
+        // Read analogue value
+        //int analogSample = adc1_get_raw(TDS_ANALOG_GPIO);
+        ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_7, &adc_raw[0][0]));
+        ESP_LOGI("ADC_test", "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_7, adc_raw[0][0]);
+        int analogSample=adc_raw[0][0];
+        ESP_LOGI(TDS, "Read analog value %d then sleep for %f milli seconds.", analogSample, sampleDelay);
+        runningSampleValue = runningSampleValue + analogSample;
+        vTaskDelay(sampleDelay / portTICK_PERIOD_MS);
+        
+    }
+    
+    float tdsAverage = runningSampleValue / TDS_NUM_SAMPLES;
+    ESP_LOGI(TDS, "Calculated average = %f", tdsAverage);
+    return tdsAverage;
+}
+
+float convert_to_ppm(float analogReading, float waterTemp){
+    ESP_LOGI(TDS, "Converting an analog value to a TDS PPM value.");
+    //https://www.dfrobot.com/wiki/index.php/Gravity:_Analog_TDS_Sensor_/_Meter_For_Arduino_SKU:_SEN0244#More_Documents
+    float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
+    float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
+    float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
+    float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+    float compensationVolatge = averageVoltage / compensationCoefficient;  //temperature compensation
+    float tdsValue = (133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5; //convert voltage value to tds value
+
+    //ESP_LOGI(TDS, "Volts per division = %f", vPerDiv);
+    ESP_LOGI(TDS, "Average Voltage = %f", averageVoltage);
+    ESP_LOGI(TDS, "Temperature (currently fixed, we should measure this) = %f", waterTemp);
+    ESP_LOGI(TDS, "Compensation Coefficient = %f", compensationCoefficient);
+    ESP_LOGI(TDS, "Compensation Voltge = %f", compensationVolatge);
+    ESP_LOGI(TDS, "tdsValue = %f ppm", tdsValue);
+    return tdsValue;
+}
+
+void tds_task(void * pvParameters){
+    ESP_LOGI(TDS, "TDS Measurement Control Task: Starting");
+    while(1){
+        ESP_LOGI(TDS, "TDS Measurement Control Task: Read Sensor");
+        //enable_tds_sensor();
+        float sensorReading = read_tds_sensor(TDS_NUM_SAMPLES, sampleDelay);
+        float tdsResult = convert_to_ppm(sensorReading, waterTemp);
+        printf("TDS Reading = %f ppm\n", tdsResult);
+        //disable_tds_sensor();
+        ESP_LOGI(TDS, "TDS Measurement Control Task: Sleeping 1 minute");
+        vTaskDelay(((1000 / portTICK_PERIOD_MS)*60)*1); //delay in minutes between measurements
+    }
+}
+
+
+
+
+
 
 /**
  * Wait specified time for pin to go to a specified state.
@@ -304,6 +405,7 @@ static esp_err_t dht_await_pin_state(gpio_num_t pin, uint32_t timeout,
 
     return ESP_ERR_TIMEOUT;
 }
+
 
 /**
  * Request data from DHT and read raw bit stream.
@@ -1047,12 +1149,16 @@ void get_sensors(void *pvParameter)
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_7, voltage[0][0]);
         }
         
-        ppm_voltage = voltage[0][0];
-        PPM=convert_to_ppm(ppm_voltage,waterTemp);
+        //ppm_voltage = voltage[0][0];
+        //PPM=convert_to_ppm(ppm_voltage,waterTemp);
         
+        float sensorReading = read_tds_sensor(TDS_NUM_SAMPLES, sampleDelay);
+        PPM = convert_to_ppm(sensorReading, waterTemp);
+
+
         upload_app=1;
         //break;
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
     //vTaskDelete(NULL);
 }
@@ -1350,26 +1456,26 @@ void pcf_test1(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-float convert_to_ppm(float averageVoltage, float waterTemp){
-    ESP_LOGI("TDS", "Converting an analog value to a TDS PPM value.");
-    //https://www.dfrobot.com/wiki/index.php/Gravity:_Analog_TDS_Sensor_/_Meter_For_Arduino_SKU:_SEN0244#More_Documents
-    //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
-    //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
-    //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
-    float offset=47.789410;
-    float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
-    //averageVoltage=averageVoltage/(0.3472*0.9210);
-    float compensationVolatge = (averageVoltage / compensationCoefficient)*((0.9210))/1000;  //temperature compensation
-    float tdsValue = ((((133.42 * compensationVolatge * compensationVolatge * compensationVolatge) - (255.86 * compensationVolatge * compensationVolatge) + (857.39 * compensationVolatge)) * 0.5)-offset)*3.8; //convert voltage value to tds value
-
-    //ESP_LOGI("TDS", "Volts per division = %f", vPerDiv);
-    //ESP_LOGI("TDS", "Average Voltage = %f", averageVoltage);
-    //ESP_LOGI("TDS", "Temperature (currently fixed, we should measure this) = %f", waterTemp);
-    //ESP_LOGI("TDS", "Compensation Coefficient = %f", compensationCoefficient);
-    //ESP_LOGI("TDS", "Compensation Voltge = %f", compensationVolatge);
-    ESP_LOGI("TDS", "tdsValue = %f ppm", tdsValue);
-    return tdsValue;
-}
+//float convert_to_ppm(float averageVoltage, float waterTemp){
+//    ESP_LOGI("TDS", "Converting an analog value to a TDS PPM value.");
+//    //https://www.dfrobot.com/wiki/index.php/Gravity:_Analog_TDS_Sensor_/_Meter_For_Arduino_SKU:_SEN0244#More_Documents
+//    //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
+//    //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
+//    //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
+//    float offset=47.789410;
+//    float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+//    //averageVoltage=averageVoltage/(0.3472*0.9210);
+//    float compensationVolatge = (averageVoltage / compensationCoefficient)*((0.9210))/1000;  //temperature compensation
+//    float tdsValue = ((((133.42 * compensationVolatge * compensationVolatge * compensationVolatge) - (255.86 * compensationVolatge * compensationVolatge) + (857.39 * compensationVolatge)) * 0.5)-offset)*3.8; //convert voltage value to tds value
+//
+//    //ESP_LOGI("TDS", "Volts per division = %f", vPerDiv);
+//    //ESP_LOGI("TDS", "Average Voltage = %f", averageVoltage);
+//    //ESP_LOGI("TDS", "Temperature (currently fixed, we should measure this) = %f", waterTemp);
+//    //ESP_LOGI("TDS", "Compensation Coefficient = %f", compensationCoefficient);
+//    //ESP_LOGI("TDS", "Compensation Voltge = %f", compensationVolatge);
+//    ESP_LOGI("TDS", "tdsValue = %f ppm", tdsValue);
+//    return tdsValue;
+//}
 
 float convert_to_ph(float averageVoltage){
     ESP_LOGI("PH", "Converting an analog value to a PH value.");
@@ -1515,7 +1621,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     
-     //-------------ADC1 Init---------------//
+    
+    //-------------ADC1 Init---------------//
     //adc_oneshot_unit_handle_t adc1_handle;
     //adc_oneshot_unit_init_cfg_t init_config1 = {
     //    .unit_id = ADC_UNIT_1,
@@ -1534,6 +1641,7 @@ void app_main(void)
     //adc_cali_handle_t adc1_cali_handle = NULL;
     do_calibration1 = example_adc_calibration_init(ADC_UNIT_1, ADC_ATTEN_DB_11, &adc1_cali_handle);
 
+    config_pins();
     //-------------ADC2 Init---------------//
     //adc_oneshot_unit_handle_t adc2_handle;
     //adc_oneshot_unit_init_cfg_t init_config2 = {
@@ -1550,7 +1658,7 @@ void app_main(void)
     //ESP_ERROR_CHECK(adc_oneshot_config_channel(adc2_handle, ADC_CHANNEL_7, &config2));
 
     
-    //xTaskCreatePinnedToCore(wifi_start, "wifi", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    xTaskCreatePinnedToCore(wifi_start, "wifi", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
     
     //ESP_LOGI("TESTE", "Primeiro GET");
     //rest_get();
@@ -1622,7 +1730,7 @@ void app_main(void)
     //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
     
    
-  //  xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    //xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
     //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
     //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
     //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
@@ -1649,8 +1757,8 @@ void app_main(void)
             // write value to port
             //pcf8574_port_write(&pcf8574, port_val);
             
-            dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
-            ESP_LOGI("DHT_test:","Air Humidity: %.2f%% Air Temp: %.2fC", humidity, temperature);
+            //dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
+            //ESP_LOGI("DHT_test:","Air Humidity: %.2f%% Air Temp: %.2fC", humidity, temperature);
            //patch_test();
             
             
