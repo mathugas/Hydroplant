@@ -147,8 +147,9 @@ static EventGroupHandle_t s_wifi_event_group;
 #define io_int34_pin 34
 #define motor5_pin 15
 
-    char message_get[1000];
+    char message_get[10000];
     const char c1[10]= "\"c1\"";
+    const char ct[10]= "\"ct\"";
     const char c2[10]= "\"c2\"";
     const char p1[10]= "\"p1\"";
     const char p2[10]= "\"p2\"";
@@ -166,6 +167,8 @@ bool do_calibration2;
 bool solution_control=1;
 bool stop_circulation=0;
 bool stop_circulation_critc=0;
+bool post=0;
+bool get=0;
 
 adc_cali_handle_t adc2_cali_handle = NULL;
 adc_oneshot_unit_handle_t adc2_handle;
@@ -200,7 +203,7 @@ float ppm_max=800.0;
 float ppm_min=350.0;
 uint8_t port1_val=0xFF;
 uint8_t port2_val=0x00;
-uint32_t counter=0x00;
+long int counter=0x00;
 bool upload_app=0;
 bool veg=0;
 bool bloom=0;
@@ -225,6 +228,239 @@ bool pcf2_read_pin(char pin_number);
 #define DHT_TIMER_INTERVAL 2
 #define DHT_DATA_BITS 40
 #define DHT_DATA_BYTES (DHT_DATA_BITS / 8)
+
+
+//#include <string.h>
+//#include <stdlib.h>
+//#include "freertos/FreeRTOS.h"
+//#include "freertos/task.h"
+//#include "esp_log.h"
+//#include "esp_system.h"
+//#include "nvs_flash.h"
+//#include "esp_event.h"
+//#include "esp_netif.h"
+//#include "protocol_examples_common.h"
+#include "esp_tls.h"
+
+
+#include "esp_http_client.h"
+
+#define MAX_HTTP_RECV_BUFFER 512
+#define MAX_HTTP_OUTPUT_BUFFER 2048
+//static const char *TAG = "HTTP_CLIENT";
+
+/* Root cert for howsmyssl.com, taken from howsmyssl_com_root_cert.pem
+   The PEM file was extracted from the output of this command:
+   openssl s_client -showcerts -connect www.howsmyssl.com:443 </dev/null
+   The CA root cert is the last cert given in the chain of certs.
+   To embed it in the app binary, the PEM file is named
+   in the component.mk COMPONENT_EMBED_TXTFILES variable.
+*/
+extern const char howsmyssl_com_root_cert_pem_start[] asm("_binary_howsmyssl_com_root_cert_pem_start");
+extern const char howsmyssl_com_root_cert_pem_end[]   asm("_binary_howsmyssl_com_root_cert_pem_end");
+
+extern const char postman_root_cert_pem_start[] asm("_binary_postman_root_cert_pem_start");
+extern const char postman_root_cert_pem_end[]   asm("_binary_postman_root_cert_pem_end");
+
+
+esp_err_t _http_event_handler(esp_http_client_event_handle_t evt)
+{
+    static char *output_buffer;  // Buffer to store response of http request from event handler
+    static int output_len;       // Stores number of bytes read
+    switch(evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_CONNECTED");
+            break;
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_HEADER_SENT");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            break;
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_DATA, len=%d", evt->data_len);
+            /*
+             *  Check for chunked encoding is added as the URL for chunked encoding used in this example returns binary data.
+             *  However, event handler can also be used in case chunked encoding is used.
+             */
+            if (!esp_http_client_is_chunked_response(evt->client)) {
+                // If user_data buffer is configured, copy the response into the buffer
+                if (evt->user_data) {
+                    memcpy(evt->user_data + output_len, evt->data, evt->data_len);
+                } else {
+                    if (output_buffer == NULL) {
+                        output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
+                        output_len = 0;
+                        if (output_buffer == NULL) {
+                            ESP_LOGE("HTTP REQUEST", "Failed to allocate memory for output buffer");
+                            return ESP_FAIL;
+                        }
+                    }
+                    memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                }
+                output_len += evt->data_len;
+            }
+
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_FINISH");
+            if (output_buffer != NULL) {
+                // Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
+                ESP_LOG_BUFFER_HEX("HTTP REQUEST", output_buffer, output_len);
+                free(output_buffer);
+                output_buffer = NULL;
+            }
+            output_len = 0;
+            break;
+        //case HTTP_EVENT_DISCONNECTED:
+        //    ESP_LOGI("HTTP REQUEST", "HTTP_EVENT_DISCONNECTED");
+        //    int mbedtls_err = 0;
+        //    esp_err_t err = esp_tls_get_and_clear_last_error((esp_tls_error_handle_t)evt->data, &mbedtls_err, NULL);
+        //    if (err != 0) {
+        //        ESP_LOGI("HTTP REQUEST", "Last esp error code: 0x%x", err);
+        //        ESP_LOGI("HTTP REQUEST", "Last mbedtls failure: 0x%x", mbedtls_err);
+        //    }
+        //    if (output_buffer != NULL) {
+        //        //ESP_LOG_BUFFER_HEX("HTTP REQUEST", output_buffer, output_len);
+        //        free(output_buffer);
+        //        output_buffer = NULL;
+        //    }
+        //    output_len = 0;
+        //    break;
+        case HTTP_EVENT_REDIRECT:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_REDIRECT");
+            esp_http_client_set_header(evt->client, "From", "user@example.com");
+            esp_http_client_set_header(evt->client, "Accept", "text/html");
+            esp_http_client_set_redirection(evt->client);
+            break;
+        default:
+        break;
+    }
+    return ESP_OK;
+}
+
+static void http_rest_with_url(void)
+{
+    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
+    /**
+     * NOTE: All the configuration parameters for http_client must be spefied either in URL or as host and path parameters.
+     * If host and path parameters are not set, query parameter will be ignored. In such cases,
+     * query parameter should be specified in URL.
+     *
+     * If URL as well as host and path parameters are specified, values of host and path will be considered.
+     */
+    esp_http_client_config_t config = {
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/SendingValuesEsp/Parameters/?key=AIzaSyCyDMEBVIO-kxZxl2F5pRgAa34TDye5ExU",
+        .method = HTTP_METHOD_GET,
+        .cert_pem = NULL,
+        .event_handler =_http_event_handler
+        //.user_data = local_response_buffer,        // Pass address of local buffer to get response
+        //.disable_auto_redirect = true,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // GET
+    esp_http_client_set_timeout_ms(client, 10000); 
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI("HTTP REQUEST", "HTTP GET Status = %d, content_length = %lld",
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE("HTTP REQUEST", "HTTP GET request failed: %s", esp_err_to_name(err));
+    }
+    printf("estou aqui 1");
+    ESP_LOG_BUFFER_HEX("HTTP REQUEST", local_response_buffer, strlen(local_response_buffer));
+    printf(local_response_buffer);
+    printf("estou aqui 2");
+    //// POST
+    //const char *post_data = "{\"field1\":\"value1\"}";
+    //esp_http_client_set_url(client, "http://httpbin.org/post");
+    //esp_http_client_set_method(client, HTTP_METHOD_POST);
+    //esp_http_client_set_header(client, "Content-Type", "application/json");
+    //esp_http_client_set_post_field(client, post_data, strlen(post_data));
+    //err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI("HTTP REQUEST", "HTTP POST Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //} else {
+    //    ESP_LOGE("HTTP REQUEST", "HTTP POST request failed: %s", esp_err_to_name(err));
+    //}
+
+    ////PUT
+    //esp_http_client_set_url(client, "http://httpbin.org/put");
+    //esp_http_client_set_method(client, HTTP_METHOD_PUT);
+    //err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI("HTTP REQUEST", "HTTP PUT Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //} else {
+    //    ESP_LOGE("HTTP REQUEST", "HTTP PUT request failed: %s", esp_err_to_name(err));
+    //}
+//
+    ////PATCH
+    //esp_http_client_set_url(client, "http://httpbin.org/patch");
+    //esp_http_client_set_method(client, HTTP_METHOD_PATCH);
+    //esp_http_client_set_post_field(client, NULL, 0);
+    //err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI("HTTP REQUEST", "HTTP PATCH Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //} else {
+    //    ESP_LOGE("HTTP REQUEST", "HTTP PATCH request failed: %s", esp_err_to_name(err));
+    //}
+//
+    ////DELETE
+    //esp_http_client_set_url(client, "http://httpbin.org/delete");
+    //esp_http_client_set_method(client, HTTP_METHOD_DELETE);
+    //err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI("HTTP REQUEST", "HTTP DELETE Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //} else {
+    //    ESP_LOGE("HTTP REQUEST", "HTTP DELETE request failed: %s", esp_err_to_name(err));
+    //}
+//
+    ////HEAD
+    //esp_http_client_set_url(client, "http://httpbin.org/get");
+    //esp_http_client_set_method(client, HTTP_METHOD_HEAD);
+    //err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI("HTTP REQUEST", "HTTP HEAD Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //} else {
+    //    ESP_LOGE("HTTP REQUEST", "HTTP HEAD request failed: %s", esp_err_to_name(err));
+    //}
+
+    esp_http_client_cleanup(client);
+}
+
+
+
+
+
+static void http_test_task(void *pvParameters)
+{
+    while(1){
+    http_rest_with_url();
+    
+    //https_with_url();
+
+    ESP_LOGI("HTTP REQUEST", "Finish http example");
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+
+
 
 /*
  *  Note:
@@ -284,7 +520,7 @@ static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 #define TDS_NUM_SAMPLES             5  //(int) Number of reading to take for an average
 #define TDS_SAMPLE_PERIOD           5  //(int) Sample period (delay between samples == sample period / number of readings)
 //#define TDS_TEMPERATURE             18.0  //(float) Temperature of water (we should measure this with a sensor to get an accurate reading)
-#define TDS_VREF                    1.18   //(float) Voltage reference for ADC. We should measure the actual value of each ESP32
+#define TDS_VREF                    2.8   //(float) Voltage reference for ADC. We should measure the actual value of each ESP32
 
 static const char *TDS = "TDS INFO";
 float sampleDelay = (TDS_SAMPLE_PERIOD / TDS_NUM_SAMPLES) * 1000;
@@ -339,21 +575,23 @@ float read_tds_sensor(int numSamples, float sampleDelay){
     return tdsAverage;
 }
 
-float convert_to_ppm(float analogReading, float waterTemp){
+float convert_to_ppm(float averageVoltage, float waterTemp){
     ESP_LOGI(TDS, "Converting an analog value to a TDS PPM value.");
     //https://www.dfrobot.com/wiki/index.php/Gravity:_Analog_TDS_Sensor_/_Meter_For_Arduino_SKU:_SEN0244#More_Documents
-    float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
-    float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
-    float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
+    //float adcCompensation = 1 + (1/3.9); // 1/3.9 (11dB) attenuation.
+    //float vPerDiv = (TDS_VREF / 4096) * adcCompensation; // Calculate the volts per division using the VREF taking account of the chosen attenuation value.
+    //float averageVoltage = analogReading * vPerDiv; // Convert the ADC reading into volts
+    averageVoltage=(averageVoltage/1000.0)/0.3472;
+    float compensation=0.78;
     float compensationCoefficient=1.0+0.02*(waterTemp-25.0);    //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
-    float compensationVolatge = averageVoltage / compensationCoefficient;  //temperature compensation
-    float tdsValue = (133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5; //convert voltage value to tds value
+    float compensationVolatge = (averageVoltage / compensationCoefficient);  //temperature compensation
+    float tdsValue = (133.42 * compensationVolatge * compensationVolatge * compensationVolatge - 255.86 * compensationVolatge * compensationVolatge + 857.39 * compensationVolatge) * 0.5 * compensation; //convert voltage value to tds value
 
     //ESP_LOGI(TDS, "Volts per division = %f", vPerDiv);
-    ESP_LOGI(TDS, "Average Voltage = %f", averageVoltage);
-    ESP_LOGI(TDS, "Temperature (currently fixed, we should measure this) = %f", waterTemp);
-    ESP_LOGI(TDS, "Compensation Coefficient = %f", compensationCoefficient);
-    ESP_LOGI(TDS, "Compensation Voltge = %f", compensationVolatge);
+    //ESP_LOGI(TDS, "Average Voltage = %f", averageVoltage);
+    //ESP_LOGI(TDS, "Temperature (currently fixed, we should measure this) = %f", waterTemp);
+    //ESP_LOGI(TDS, "Compensation Coefficient = %f", compensationCoefficient);
+    //ESP_LOGI(TDS, "Compensation Voltge = %f", compensationVolatge);
     ESP_LOGI(TDS, "tdsValue = %f ppm", tdsValue);
     return tdsValue;
 }
@@ -458,24 +696,24 @@ static inline esp_err_t dht_fetch_data(dht_sensor_type_t sensor_type, gpio_num_t
 static inline int16_t dht_convert_data_2(dht_sensor_type_t sensor_type, uint8_t msb, uint8_t lsb)
 {
     int16_t data;
-    const int8_t scale=256;
+    //const int8_t scale=256;
 
-    if (sensor_type == DHT_TYPE_DHT11)
-    {
-        //data=msb*10;
-        data = msb * 100;
-        data = data+(lsb);
-        //printf("teste msb %d lsb: %d data %d", msb, lsb , data);
-        data = data/10;
-    }
-    else
-    {
+    //if (sensor_type == DHT_TYPE_DHT11)
+    //{
+    //    //data=msb*10;
+    //    data = msb * 100;
+    //    data = data+(lsb);
+    //    printf("teste msb %d lsb: %d data %d", msb, lsb , data);
+    //    data = data/10;
+    //}
+    //else
+    //{
         data = msb;
         data <<= 8;
         data |= lsb;
         if (msb & BIT(7))
             data = -data;       // convert it to negative
-    }
+    //}
 
     return data;
 }
@@ -531,9 +769,9 @@ esp_err_t dht_read_float_data_2(dht_sensor_type_t sensor_type, gpio_num_t pin,
         return res;
 
     if (humidity)
-        *humidity = i_humidity / 100.0;
+        *humidity = i_humidity / 10.0;
     if (temperature)
-        *temperature = i_temp / 100.0;
+        *temperature = i_temp / 10.0;
 
     return ESP_OK;
 }
@@ -691,21 +929,88 @@ esp_err_t client_event_post_handler(esp_http_client_event_handle_t evt)
 
 esp_err_t client_event_get_handler(esp_http_client_event_handle_t evt)
 {
+    static char *output_buffer;  // Buffer to store response of http request from event handler
+    static int output_len;       // Stores number of bytes read
     switch (evt->event_id)
     {
     case HTTP_EVENT_ON_DATA:
-
+                    if (!esp_http_client_is_chunked_response(evt->client)) {
+                // If user_data buffer is configured, copy the response into the buffer
+                if (evt->user_data) {
+                    memcpy(evt->user_data + output_len, evt->data, evt->data_len);
+                } else {
+                    if (output_buffer == NULL) {
+                        output_buffer = (char *) malloc(esp_http_client_get_content_length(evt->client));
+                        output_len = 0;
+                        if (output_buffer == NULL) {
+                            ESP_LOGE("HTTP REQUEST", "Failed to allocate memory for output buffer");
+                            return ESP_FAIL;
+                        }
+                    }
+                    memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                }
+                output_len += evt->data_len;
+            }
+        
         printf("HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
         snprintf(message_get, sizeof(message_get), "HTTP_EVENT_ON_DATA: %.*s\n", evt->data_len, (char *)evt->data);
         
         break;
-
+    case HTTP_EVENT_ERROR:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_CONNECTED");
+            break;
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_HEADER_SENT");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            ESP_LOGD("HTTP REQUEST", "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            break;
+        case HTTP_EVENT_DISCONNECTED:
+            ESP_LOGI("HTTP REQUEST", "HTTP_EVENT_DISCONNECTED");
+            int mbedtls_err = 0;
+            esp_err_t err = esp_tls_get_and_clear_last_error((esp_tls_error_handle_t)evt->data, &mbedtls_err, NULL);
+            if (err != 0) {
+                ESP_LOGI("HTTP REQUEST", "Last esp error code: 0x%x", err);
+                ESP_LOGI("HTTP REQUEST", "Last mbedtls failure: 0x%x", mbedtls_err);
+            }
+            if (output_buffer != NULL) {
+                //ESP_LOG_BUFFER_HEX("HTTP REQUEST", output_buffer, output_len);
+                free(output_buffer);
+                output_buffer = NULL;
+            }
+            output_len = 0;
+            break;
     default:
         break;
     }
     return ESP_OK;
 }
 
+void get_decode_counter()
+{
+    char aux[10000];
+    char aux2[100];
+    char *result;
+    char* pEnd; 
+    int size=10;
+    int i=0;
+    float lumi=0;
+    long int counter_test=0;
+    result=strstr(message_get, ct);
+    for (i=0; i<size; i++){
+
+        aux2[i]=*(result + (31+i));
+        if (i==size) {aux2[i]=0;}
+    }
+    //printf(aux2);
+    counter = strtol(aux2, NULL, 10);
+    //counter= strtof(aux2, NULL);
+   //printf("novo resultado counter: %ld \n",counter_test);
+    printf("novo resultado counter: %.ld \n",counter);
+}
 
 void get_decode()
 {
@@ -817,16 +1122,78 @@ void get_decode()
 
 
 
+//static void rest_get()
+//{
+//    esp_http_client_config_t config_get_2 = {
+//        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/SettingLastCounter/Value/",
+//        .method = HTTP_METHOD_GET,
+//        .cert_pem = NULL,
+//        .event_handler = client_event_get_handler};
+//     
+//    esp_http_client_handle_t client = esp_http_client_init(&config_get_2);
+//    esp_http_client_set_timeout_ms(client, 30);   
+//    esp_http_client_perform(client);
+//    esp_http_client_cleanup(client);
+//    vTaskDelay(pdMS_TO_TICKS(1000));
+//}
+
+
 static void rest_get()
 {
-    esp_http_client_config_t config_get = {
+    esp_http_client_config_t config = {
         .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/SendingValuesEsp/Parameters/?key=AIzaSyCyDMEBVIO-kxZxl2F5pRgAa34TDye5ExU",
         .method = HTTP_METHOD_GET,
         .cert_pem = NULL,
         .event_handler = client_event_get_handler};
      
-    esp_http_client_handle_t client = esp_http_client_init(&config_get);
-    //esp_http_client_set_timeout_ms(client, 30);   
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    //esp_http_client_open(client,0);
+    esp_http_client_set_timeout_ms(client, 4000);   
+    esp_http_client_perform(client);
+    //esp_http_client_cleanup(client_get);
+    //esp_http_client_cleanup(client_get);
+    //esp_http_client_cleanup(client_get);
+    //if (post==1){
+    //char message[3000];
+    ////snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
+    //snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'%ld'}}}", waterTemp, airTemp, PH, PPM, airHumi, counter);
+    //const char *post_data = message;
+    //const char *TAG = "POST REQUEST";
+    ////esp_http_client_handle_t client = esp_http_client_init(&config_post);
+    //
+    //esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json");
+    //esp_http_client_set_method(client, HTTP_METHOD_POST);
+    //esp_http_client_set_header(client, "Content-Type", "application/json");
+    //esp_http_client_set_post_field(client, post_data, strlen(post_data));
+    //esp_err_t err = esp_http_client_perform(client);
+    //if (err == ESP_OK) {
+    //    ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %lld",
+    //            esp_http_client_get_status_code(client),
+    //            esp_http_client_get_content_length(client));
+    //            if (esp_http_client_get_status_code(client)==200){
+    //                
+    //            }
+    //} else {
+    //    ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+    //}
+    //post=0;
+    //}
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    
+}
+
+
+static void rest_get_counter()
+{
+    esp_http_client_config_t config_get_2 = {
+        .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/SettingLastCounter/Value/?key=AIzaSyCyDMEBVIO-kxZxl2F5pRgAa34TDye5ExU",
+        .method = HTTP_METHOD_GET,
+        .cert_pem = NULL,
+        .event_handler = client_event_get_handler};
+     
+    esp_http_client_handle_t client = esp_http_client_init(&config_get_2);
+    esp_http_client_set_timeout_ms(client, 10000);   
     esp_http_client_perform(client);
     esp_http_client_cleanup(client);
 }
@@ -852,6 +1219,7 @@ static void post_rest_function()
 static void post_test()
 {
 // POST
+    counter++;
     const char *TAG = "POST REQUEST";
     esp_http_client_config_t config_post = {
         .url = "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json",
@@ -860,12 +1228,14 @@ static void post_test()
         .event_handler = client_event_post_handler};
         //const char *post_data = "{\"title\":\"test\"}";
     //const char *post_data = "{'fields':{\"wt\":{'stringValue':'10'}}}";
-    char message[300];
+    
+    char message[3000];
     //snprintf (message, sizeof(message), "{\"Ambient Temperature\":\"%.1f°C\",\"Ambient Humidity\":\"%.1f\",\"Solution Temperature\":\"%.2f°C\", \"Solution PH\":\"%f\", \"Solution PPM\":\"%f\"}", airTemp, airHumi, waterTemp, PPM, PH);
     snprintf (message, sizeof(message), "{'fields':{\"wt\":{'stringValue':'%.2f'},\"at\":{'stringValue':'%.2f'},\"ph\":{'stringValue':'%.2f'},\"cd\":{'stringValue':'%.2f'},\"hd\":{'stringValue':'%.2f'}, \"ct\":{'stringValue':'%ld'}}}", waterTemp, airTemp, PH, PPM, airHumi, counter);
     const char *post_data = message;
-    esp_http_client_handle_t client = esp_http_client_init(&config_post);
     
+    esp_http_client_handle_t client = esp_http_client_init(&config_post);
+    //esp_http_client_open(client,0);
     esp_http_client_set_url(client, "https://firestore.googleapis.com/v1/projects/plant-arm-project/databases/(default)/documents/posts/ReceivingValuesEsp/.json");
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -875,12 +1245,18 @@ static void post_test()
         ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %lld",
                 esp_http_client_get_status_code(client),
                 esp_http_client_get_content_length(client));
-                if (esp_http_client_get_status_code(client)==200){
-                    counter++;
-                }
+                //if (esp_http_client_get_status_code(client)==200){
+                //    
+                //}
     } else {
         ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
     }
+    printf("estou aqui 1");
+    esp_http_client_close(client);
+    
+    printf("estou aqui 2");
+    esp_http_client_cleanup(client);
+    printf("estou aqui 3");
 }
 
     static void patch_test()
@@ -1149,16 +1525,16 @@ void get_sensors(void *pvParameter)
         ESP_LOGI("ADC_test", "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_7, voltage[0][0]);
         }
         
-        //ppm_voltage = voltage[0][0];
-        //PPM=convert_to_ppm(ppm_voltage,waterTemp);
+        ppm_voltage = voltage[0][0]-43.0;
+        PPM=convert_to_ppm(ppm_voltage,waterTemp);
         
-        float sensorReading = read_tds_sensor(TDS_NUM_SAMPLES, sampleDelay);
-        PPM = convert_to_ppm(sensorReading, waterTemp);
+        //float sensorReading = read_tds_sensor(TDS_NUM_SAMPLES, sampleDelay);
+        //PPM = convert_to_ppm(sensorReading, waterTemp);
 
 
         upload_app=1;
         //break;
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
     //vTaskDelete(NULL);
 }
@@ -1168,10 +1544,17 @@ void app_post(void *pvParameter)
 
     while(1)
     {
+        if (get==0){
+        post=1;
         post_test();
-        
         upload_app=0;
-        vTaskDelay(pdMS_TO_TICKS(30000));
+        post=0;
+        //esp_http_client_cleanup();
+        vTaskDelay(pdMS_TO_TICKS(1000*15*1));
+        }
+        else {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
 }
 
@@ -1179,10 +1562,38 @@ void app_get(void *pvParameter)
 {
     while(1)
     {
+        if (post==0){
+        get=1;
         rest_get();
         get_decode();
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        get=0;
+        //esp_http_client_cleanup();
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+        else {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
+}
+
+void counter_get(void *pvParameter)
+{
+    while(1)
+    {
+        //if (post==0){
+        //get=1;
+        rest_get_counter();
+        get_decode_counter();
+        //get_decode();
+        //get=0;
+        break;
+        //vTaskDelay(pdMS_TO_TICKS(1000));
+        //}
+        //else {
+            //vTaskDelay(pdMS_TO_TICKS(1000));
+        //}
+    }
+    vTaskDelete(NULL);
 }
 
 void critical_levels(void *pvParameter)
@@ -1676,7 +2087,7 @@ void app_main(void)
     //ESP_LOGI("TESTE", "Terceiro GET");
     //rest_get();
 
-
+    
     
     //xTaskCreate(pcf_test1, "pcf_test1", configMINIMAL_STACK_SIZE * 5, NULL, 5, NULL);
     //i2c_dev_t pcf8574;
@@ -1697,7 +2108,8 @@ void app_main(void)
     
     //xTaskCreatePinnedToCore(dht_test, "dht_test", configMINIMAL_STACK_SIZE * 3, NULL, 1, NULL,1);
     //xTaskCreatePinnedToCore(ds18b20_test, "Water_temp_test", configMINIMAL_STACK_SIZE * 4, NULL, 0, NULL,1);
-        
+    //rest_get_counter();
+
     uint8_t test = 0xaa;
     uint8_t data[2];
     float ppm_voltage;
@@ -1709,7 +2121,6 @@ void app_main(void)
     
     dht_read_float_data_2(SENSOR_TYPE, CONFIG_EXAMPLE_DATA_GPIO, &humidity, &temperature);
     vTaskDelay(100/portTICK_PERIOD_MS);
-
     
     vTaskDelay(5000/portTICK_PERIOD_MS);
     // Start System Operation
@@ -1725,18 +2136,34 @@ void app_main(void)
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_2, LEDC_DUTY));
     // Update duty to apply the new value
     //ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_2));
-    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,0);
-    //xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
-    //xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    rest_get_counter();
+    get_decode_counter();
+    //xTaskCreatePinnedToCore(counter_get, "counter_get", configMINIMAL_STACK_SIZE * 10, NULL, 1, NULL,1);
     
-   
-    //xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
-    //xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
-    //xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
-    //xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
-    //xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
-    //xTaskCreatePinnedToCore(critical_levels, "solution_level_control_critical_levels", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    xTaskCreatePinnedToCore(get_sensors, "get_sensors", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,0);
+    
+    xTaskCreatePinnedToCore(app_post, "app_update", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,0);
+
+    xTaskCreatePinnedToCore(app_get, "app_get", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
+    //post=0;
+    
+    //vTaskDelay(1000/portTICK_PERIOD_MS);
+   // xTaskCreatePinnedToCore(http_test_task, "http_task", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,0);
+    
+
+
+    
+
+    
+    
+    
+    xTaskCreatePinnedToCore(pid_update, "pid_update", configMINIMAL_STACK_SIZE * 5, NULL, 0, NULL,1);
+    xTaskCreatePinnedToCore(humi_control, "humi_control", configMINIMAL_STACK_SIZE * 5, NULL, 2, NULL,1);
+    xTaskCreatePinnedToCore(ph_control, "ph_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    xTaskCreatePinnedToCore(ppm_control, "ppm_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,1);
+    xTaskCreatePinnedToCore(light_control, "light_control", configMINIMAL_STACK_SIZE * 5, NULL, 3, NULL,1);
+    xTaskCreatePinnedToCore(solution_level_control, "solution_level_control", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
+    xTaskCreatePinnedToCore(critical_levels, "solution_level_control_critical_levels", configMINIMAL_STACK_SIZE * 5, NULL, 1, NULL,0);
 
     
     
